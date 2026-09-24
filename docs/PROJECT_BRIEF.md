@@ -46,9 +46,9 @@ view Steam's own UI never shows.
 | Other | scikit-learn (sentiment), sentence-transformers (aspect embeddings), Docker | Real trained/embedding-based ML, not LLM calls |
 
 ## 5. Data model (rough)
-- `games`: appid, name, last_ingested_at
-- `reviews`: id, appid (FK), review_text, voted_up, votes_up, playtime_forever, language, created_at
-- `review_aspects`: review_id (FK), sentence_text, aspect_label, similarity_score, predicted_sentiment
+- `games`: appid, name, last_ingested_at, aspects_status, aspects_error, aspects_processed_at
+- `reviews`: id, appid (FK), review_text, voted_up, votes_up, playtime_forever, language, created_at, predicted_sentiment
+- `review_aspects`: review_id (FK), sentence_text, aspect_label, similarity_score (predicted_sentiment moved to `reviews` on 2026-09-24, see DECISIONS.md)
 
 ## 6. Key screens / API endpoints
 - `GET /games/{appid}/aspects` — aggregated per-aspect sentiment
@@ -63,7 +63,7 @@ view Steam's own UI never shows.
 | 2 | Sentiment baseline | TF-IDF + LogReg trained on `voted_up`, reports accuracy/F1 vs. majority-class baseline. **Done 2026-09-24** (negative-class F1 0.718 vs. baseline 0.000) |
 | 3 | Aspect anchors + embedding assignment | Sentences tagged with an aspect (or none) via cosine similarity. **Done 2026-09-24** (standalone `assign_aspects()`; persistence deferred to M5; threshold 0.40 pending M4) |
 | 4 | Aspect evaluation | 100–150 hand-labeled sentences scored; per-aspect precision/recall documented. **Done 2026-09-24** (140 hand labels; after anchor tuning accuracy 0.621, macro F1 0.658, optimistic because tuned on the same set; see DECISIONS.md) |
-| 5 | Aggregation + API | `/games/{appid}/aspects` and `/games/{appid}/reviews` return real data |
+| 5 | Aggregation + API | `/games/{appid}/aspects` and `/games/{appid}/reviews` return real data. **Done 2026-09-24** (results stored in `review_aspects` by a batch pass, `scripts/process_reviews.py`, or by a background task on first request; see DECISIONS.md) |
 | 6 | Dashboard | Selector, aspect chart, trend chart, filterable review list against live API |
 | 7 | Polish, deploy, stretch goal | Live URL works, README has eval results; fine-tune DistilBERT if time allows |
 
@@ -85,4 +85,4 @@ view Steam's own UI never shows.
 | 2026-09-24 | Use `voted_up` as weak-supervision sentiment label | Free, real signal from users, no manual labeling or LLM calls needed |
 | 2026-09-24 | Anchor-based embedding similarity for aspects (not BERTopic or a fine-tuned classifier) | Fastest, most explainable option that fits a 1-week scope |
 | 2026-09-24 | Support any appid via on-demand fetch-and-cache, not a fixed game list | Ships a real tool, not a one-off analysis |
-| 2026-09-24 | Domain-driven backend structure (games/reviews/ml packages), per zhanymkanov/fastapi-best-practices | Scales better than type-based folders as the project grows |
+| 2026-09-24 | Domain-driven backend structure (games/reviews/ml packages), per zhanymkanov/fastapi-best-practices | Scales better than type-based folders as the project grows |

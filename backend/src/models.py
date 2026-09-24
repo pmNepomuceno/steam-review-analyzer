@@ -2,6 +2,6 @@
 
 from src.database import Base
 from src.games.models import Game
-from src.reviews.models import Review
+from src.reviews.models import Review, ReviewAspect
 
-__all__ = ["Base", "Game", "Review"]
+__all__ = ["Base", "Game", "Review", "ReviewAspect"]
