@@ -60,7 +60,7 @@ view Steam's own UI never shows.
 | # | Milestone | Done when... |
 |---|---|---|
 | 1 | Repo scaffold + on-demand ingestion | Given any appid, reviews are fetched, cached in Postgres, min-review-count guard in place. **Done 2026-09-24** |
-| 2 | Sentiment baseline | TF-IDF + LogReg trained on `voted_up`, reports accuracy/F1 vs. majority-class baseline |
+| 2 | Sentiment baseline | TF-IDF + LogReg trained on `voted_up`, reports accuracy/F1 vs. majority-class baseline. **Done 2026-09-24** (negative-class F1 0.718 vs. baseline 0.000) |
 | 3 | Aspect anchors + embedding assignment | Sentences tagged with an aspect (or none) via cosine similarity |
 | 4 | Aspect evaluation | 100–150 hand-labeled sentences scored; per-aspect precision/recall documented |
 | 5 | Aggregation + API | `/games/{appid}/aspects` and `/games/{appid}/reviews` return real data |
@@ -77,6 +77,7 @@ view Steam's own UI never shows.
 - Final aspect list — confirm: performance, price, bugs, story, gameplay, other
 - ~~Minimum review count before serving results for a new appid~~ — resolved: 200 usable English reviews (see `DECISIONS.md`)
 - Which 2-3 games to develop/evaluate against before wiring up "any appid"
+- Review sample: ingestion currently takes only the ~1000 most recent reviews and never refreshes, so results reflect recent opinion over a 1-3 month window. Decide before M6 whether that's the intended scope (and label it in the UI), or whether to sample across the game's lifetime and/or refresh stale caches (see `DECISIONS.md`)
 
 ## 10. Decisions log
 | Date | Decision | Reason |
@@ -84,4 +85,4 @@ view Steam's own UI never shows.
 | 2026-09-24 | Use `voted_up` as weak-supervision sentiment label | Free, real signal from users, no manual labeling or LLM calls needed |
 | 2026-09-24 | Anchor-based embedding similarity for aspects (not BERTopic or a fine-tuned classifier) | Fastest, most explainable option that fits a 1-week scope |
 | 2026-09-24 | Support any appid via on-demand fetch-and-cache, not a fixed game list | Ships a real tool, not a one-off analysis |
-| 2026-09-24 | Domain-driven backend structure (games/reviews/ml packages), per zhanymkanov/fastapi-best-practices | Scales better than type-based folders as the project grows |
+| 2026-09-24 | Domain-driven backend structure (games/reviews/ml packages), per zhanymkanov/fastapi-best-practices | Scales better than type-based folders as the project grows |

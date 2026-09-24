@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Milestone 1 (on-demand ingestion) is implemented in the backend. `src/ml/*`, `backend/scripts/*` and the whole `frontend/` are still empty scaffolding for later milestones. `docs/PROJECT_BRIEF.md` is the source of truth for scope, data model, endpoints and milestones; `docs/DECISIONS.md` logs choices made while building.
+Milestones 1 (on-demand ingestion) and 2 (sentiment baseline: `scripts/train_sentiment.py` + `src/ml/sentiment.py`) are implemented in the backend. `src/ml/aspects.py`, `src/ml/anchors.py`, `scripts/evaluate_aspects.py` and the whole `frontend/` are still empty scaffolding for later milestones. `docs/PROJECT_BRIEF.md` is the source of truth for scope, data model, endpoints and milestones; `docs/DECISIONS.md` logs choices made while building.
 
 ## Commands
 
@@ -19,6 +19,7 @@ uvicorn src.main:app --reload            # API on :8000
 pytest -q                                # needs the db container up; Steam is mocked with respx
 pytest tests/test_reviews_api.py::test_pagination_offset   # single test
 ruff check .
+python scripts/train_sentiment.py        # retrain from cached reviews -> models_store/sentiment.joblib + docs/eval/sentiment_report.txt
 alembic revision --autogenerate -m "..." # after changing models
 ```
 
