@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Milestones 1 (on-demand ingestion), 2 (sentiment baseline: `scripts/train_sentiment.py` + `src/ml/sentiment.py`) and 3 (aspect tagging: `src/ml/anchors.py` + `src/ml/aspects.py::assign_aspects`, standalone and not yet persisted to `review_aspects`) are implemented in the backend. `scripts/evaluate_aspects.py` and the whole `frontend/` are still empty scaffolding for later milestones. `docs/PROJECT_BRIEF.md` is the source of truth for scope, data model, endpoints and milestones; `docs/DECISIONS.md` logs choices made while building.
+Milestones 1 (on-demand ingestion), 2 (sentiment baseline: `scripts/train_sentiment.py` + `src/ml/sentiment.py`) and 3 (aspect tagging: `src/ml/anchors.py` + `src/ml/aspects.py::assign_aspects`, standalone and not yet persisted to `review_aspects`) are implemented in the backend. Milestone 4's code is done: `scripts/build_eval_sample.py` drew the 140-unit hand-labeling sample (rules in `docs/eval/ASPECT_LABELING.md`) and `scripts/evaluate_aspects.py` scores it. M4 is waiting only on the user's gold labels in `docs/eval/aspect_labels.csv`. Gold labels are written by the user by hand, never generated, filled in or "fixed" by Claude. Until the labels are complete, don't open or print `aspect_sample_key.csv` or the sample's predictions for the user (labeling is blind), and don't tune `ANCHORS` or `SIMILARITY_THRESHOLD`. The `frontend/` is still empty.
+
+**Next steps once the labels are in:** run `python scripts/evaluate_aspects.py` (it refuses while any row is blank and lists what's wrong). The report goes to `docs/eval/aspect_report.txt`. Record the headline numbers (accuracy, macro F1 and per-aspect precision/recall; all rows, unambiguous, population-weighted) in `docs/DECISIONS.md` and mark M4 done in the brief's milestone table. If the numbers call for it, tune anchors or threshold against the report. Tuning on these 140 units makes the numbers optimistic, so say so wherever they're quoted. Then start M5: add the `review_aspects` table and migration, a re-runnable batch tagging pass (not inside `ensure_ingested`), aggregation and the two endpoints. `docs/PROJECT_BRIEF.md` is the source of truth for scope, data model, endpoints and milestones; `docs/DECISIONS.md` logs choices made while building.
 
 ## Commands
 
@@ -20,6 +22,8 @@ pytest -q                                # needs the db container up; Steam is m
 pytest tests/test_reviews_api.py::test_pagination_offset   # single test
 ruff check .
 python scripts/train_sentiment.py        # retrain from cached reviews -> models_store/sentiment.joblib + docs/eval/sentiment_report.txt
+python scripts/build_eval_sample.py      # M4 aspect eval sample -> docs/eval/aspect_labels.csv (hand-label, blind) + aspect_sample_key.csv; refuses to run once the labels file has been edited, unless --force (which backs up the old files first)
+python scripts/evaluate_aspects.py      # score gold labels -> docs/eval/aspect_report.txt; re-scores with current ANCHORS; --threshold 0.36 to try another value, --from-key to use stored scores
 alembic revision --autogenerate -m "..." # after changing models
 ```
 
@@ -47,4 +51,4 @@ English-only reviews, no auth or user accounts, no streaming ingestion, no revie
 
 ## Docs
 
-`docs/PROJECT_BRIEF.md` has a decisions log (section 10). `docs/DECISIONS.md` exists but is empty; record new architectural decisions there or in the brief's log with the date and reason.
+`docs/PROJECT_BRIEF.md` has a decisions log (section 10). `docs/DECISIONS.md` continues that log; record new decisions there with the date and reason.

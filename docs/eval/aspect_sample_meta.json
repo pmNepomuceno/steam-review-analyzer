@@ -1,0 +1,81 @@
+{
+  "built_at": "2026-09-24T13:16:20+00:00",
+  "seed": 42,
+  "n": 140,
+  "threshold": 0.4,
+  "band": [
+    0.3,
+    0.5
+  ],
+  "long_unit_words": 25,
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "anchors_sha256": "42ae5183aa7375bb",
+  "population_units": 26048,
+  "population_units_deduped": 24714,
+  "population_strata": {
+    "Cities: Skylines II": {
+      "near_below": 1078,
+      "near_above": 493,
+      "long": 99,
+      "other": 2207
+    },
+    "Hades": {
+      "near_below": 1025,
+      "near_above": 700,
+      "long": 45,
+      "other": 1983
+    },
+    "PAYDAY 3": {
+      "near_below": 1871,
+      "near_above": 692,
+      "long": 177,
+      "other": 3249
+    },
+    "Portal 2": {
+      "near_below": 543,
+      "near_above": 294,
+      "long": 24,
+      "other": 1125
+    },
+    "Starfield": {
+      "near_below": 2981,
+      "near_above": 1225,
+      "long": 152,
+      "other": 4751
+    }
+  },
+  "sample_strata": {
+    "Cities: Skylines II": {
+      "near_below": 7,
+      "near_above": 7,
+      "long": 4,
+      "other": 10
+    },
+    "Hades": {
+      "near_below": 7,
+      "near_above": 7,
+      "long": 4,
+      "other": 10
+    },
+    "PAYDAY 3": {
+      "near_below": 7,
+      "near_above": 7,
+      "long": 4,
+      "other": 10
+    },
+    "Portal 2": {
+      "near_below": 7,
+      "near_above": 7,
+      "long": 4,
+      "other": 10
+    },
+    "Starfield": {
+      "near_below": 7,
+      "near_above": 7,
+      "long": 4,
+      "other": 10
+    }
+  },
+  "shortfalls": {},
+  "labels_sha256": "012da8c1b1cfc0a9a155f0fd913444b6d95f6bbdf5cef71646d67f6b39ff5bfe"
+}

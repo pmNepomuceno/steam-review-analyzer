@@ -115,6 +115,12 @@ def test_assign_exact_tie_goes_to_first_aspect():
         assert r["aspect"] == expected
 
 
+def test_load_rejects_an_aspect_without_anchors(monkeypatch):
+    monkeypatch.setattr(aspects, "ANCHORS", {**ANCHORS, "price": []})
+    with pytest.raises(ValueError, match="price"):
+        aspects.load()
+
+
 def test_anchor_config_shape():
     assert ASPECTS == ("performance", "price", "bugs", "story", "gameplay")
     assert all(4 <= len(phrases) <= 6 for phrases in ANCHORS.values())
@@ -206,3 +212,12 @@ def test_near_tie_goes_to_one_aspect(model):
     # Plausibly performance or price; best match wins, no split or "ambiguous" label.
     [r] = aspects.assign_aspects("the performance issues aren't worth the price")
     assert r["aspect"] in {"performance", "price"}
+
+
+def test_assign_aspects_matches_label_over_scores(model):
+    sentences, scores = aspects.score_aspects(TARGET)
+    assert scores.shape == (len(sentences), len(ASPECTS))
+    expected = [aspects.label(row) for row in scores]
+    got = [(r["aspect"], r["similarity"]) for r in aspects.assign_aspects(TARGET)]
+    assert got == [(a, pytest.approx(s)) for a, s in expected]
+    np.testing.assert_allclose(aspects.score_units(sentences), scores, atol=1e-6)

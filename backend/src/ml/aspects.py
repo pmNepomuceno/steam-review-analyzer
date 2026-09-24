@@ -15,12 +15,13 @@ The model and anchor embeddings are loaded once per process on first use (or eag
 """
 
 import re
+from collections.abc import Sequence
 from itertools import pairwise
 from typing import Any
 
 import numpy as np
 
-from src.ml.anchors import ANCHORS
+from src.ml.anchors import ANCHORS, ASPECTS
 from src.ml.constants import (
     EMBEDDING_MODEL_NAME,
     MAX_SEGMENT_WORDS,
@@ -67,6 +68,10 @@ _anchor_labels: list[str] = []
 def load() -> None:
     """Load the encoder and embed every anchor. Safe to call more than once."""
     global _model, _anchor_emb, _anchor_labels
+    # Score columns follow ANCHORS order only while every aspect has an anchor; an empty list
+    # would shift every later column onto the wrong name in `label()`.
+    if empty := [aspect for aspect, phrases in ANCHORS.items() if not phrases]:
+        raise ValueError(f"every aspect needs at least one anchor phrase; empty: {empty}")
     if _model is not None:
         return
     from sentence_transformers import SentenceTransformer  # heavy import (torch)
@@ -143,6 +148,36 @@ def split_sentences(text: str) -> list[str]:
     return units
 
 
+def _aspect_scores(
+    sentence_emb: np.ndarray, anchor_emb: np.ndarray, anchor_labels: list[str]
+) -> tuple[list[str], np.ndarray]:
+    """Per-aspect scores (max cosine over that aspect's anchors) for L2-normalized embeddings.
+
+    Returns the aspect names in first-seen order (== `ANCHORS` order) and a
+    (n_sentences, n_aspects) matrix whose columns follow that order.
+    """
+    aspects = list(dict.fromkeys(anchor_labels))
+    sims = sentence_emb @ anchor_emb.T  # (n_sentences, n_anchors); dot == cosine
+    label_idx = np.array([aspects.index(label) for label in anchor_labels])
+    per_aspect = np.stack([sims[:, label_idx == i].max(axis=1) for i in range(len(aspects))], 1)
+    return aspects, per_aspect
+
+
+def label(
+    scores: np.ndarray,
+    threshold: float = SIMILARITY_THRESHOLD,
+    aspects: Sequence[str] = ASPECTS,
+) -> tuple[str, float]:
+    """The aspect for one row of per-aspect scores, and its score.
+
+    The best aspect wins; below `threshold` the label is "none" but the best score is still
+    returned. An exact tie goes to the aspect listed first.
+    """
+    best = int(scores.argmax())  # argmax returns the first index on exact ties
+    score = float(scores[best])
+    return (aspects[best] if score >= threshold else NONE_ASPECT), score
+
+
 def _assign(
     sentences: list[str],
     sentence_emb: np.ndarray,
@@ -151,26 +186,42 @@ def _assign(
     threshold: float = SIMILARITY_THRESHOLD,
 ) -> list[AspectAssignment]:
     """Tag each sentence given L2-normalized embeddings (so dot product == cosine)."""
-    aspects = list(dict.fromkeys(anchor_labels))  # first-seen order == ANCHORS order
-    sims = sentence_emb @ anchor_emb.T  # (n_sentences, n_anchors)
-    label_idx = np.array([aspects.index(label) for label in anchor_labels])
-    per_aspect = np.stack([sims[:, label_idx == i].max(axis=1) for i in range(len(aspects))], 1)
-
+    aspects, per_aspect = _aspect_scores(sentence_emb, anchor_emb, anchor_labels)
     results: list[AspectAssignment] = []
     for sentence, scores in zip(sentences, per_aspect, strict=True):
-        best = int(scores.argmax())  # argmax returns the first index on exact ties
-        score = float(scores[best])
-        aspect = aspects[best] if score >= threshold else NONE_ASPECT
+        aspect, score = label(scores, threshold, aspects)
         results.append({"sentence": sentence, "aspect": aspect, "similarity": score})
     return results
 
 
-def assign_aspects(text: str) -> list[AspectAssignment]:
-    """Tag every sentence of `text` with an aspect or "none". Empty text gives []."""
+def score_units(units: list[str]) -> np.ndarray:
+    """Per-aspect scores for units that are already split, columns in `ASPECTS` order.
+
+    Units are embedded as given; pass them through `split_sentences` and `_fit_to_encoder`
+    first if they may be longer than one sentence.
+    """
+    if not units:
+        return np.empty((0, len(ASPECTS)))
+    load()
+    emb = _model.encode(units, normalize_embeddings=True, convert_to_numpy=True)
+    return _aspect_scores(emb, _anchor_emb, _anchor_labels)[1]
+
+
+def score_aspects(text: str) -> tuple[list[str], np.ndarray]:
+    """Split `text` into units and score each against every aspect (see `score_units`)."""
     sentences = split_sentences(text)
     if not sentences:
-        return []
+        return [], np.empty((0, len(ASPECTS)))
     load()
     sentences = _fit_to_encoder(sentences)
-    emb = _model.encode(sentences, normalize_embeddings=True, convert_to_numpy=True)
-    return _assign(sentences, emb, _anchor_emb, _anchor_labels)
+    return sentences, score_units(sentences)
+
+
+def assign_aspects(text: str) -> list[AspectAssignment]:
+    """Tag every sentence of `text` with an aspect or "none". Empty text gives []."""
+    sentences, scores = score_aspects(text)
+    results: list[AspectAssignment] = []
+    for sentence, row in zip(sentences, scores, strict=True):
+        aspect, score = label(row)
+        results.append({"sentence": sentence, "aspect": aspect, "similarity": score})
+    return results

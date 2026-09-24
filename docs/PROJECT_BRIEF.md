@@ -62,7 +62,7 @@ view Steam's own UI never shows.
 | 1 | Repo scaffold + on-demand ingestion | Given any appid, reviews are fetched, cached in Postgres, min-review-count guard in place. **Done 2026-09-24** |
 | 2 | Sentiment baseline | TF-IDF + LogReg trained on `voted_up`, reports accuracy/F1 vs. majority-class baseline. **Done 2026-09-24** (negative-class F1 0.718 vs. baseline 0.000) |
 | 3 | Aspect anchors + embedding assignment | Sentences tagged with an aspect (or none) via cosine similarity. **Done 2026-09-24** (standalone `assign_aspects()`; persistence deferred to M5; threshold 0.40 pending M4) |
-| 4 | Aspect evaluation | 100–150 hand-labeled sentences scored; per-aspect precision/recall documented |
+| 4 | Aspect evaluation | 100–150 hand-labeled sentences scored; per-aspect precision/recall documented. **Code done 2026-09-24** (140-unit sample + `evaluate_aspects.py`); waiting on hand labels |
 | 5 | Aggregation + API | `/games/{appid}/aspects` and `/games/{appid}/reviews` return real data |
 | 6 | Dashboard | Selector, aspect chart, trend chart, filterable review list against live API |
 | 7 | Polish, deploy, stretch goal | Live URL works, README has eval results; fine-tune DistilBERT if time allows |
