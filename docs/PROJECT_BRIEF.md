@@ -59,7 +59,7 @@ view Steam's own UI never shows.
 ## 7. Milestones
 | # | Milestone | Done when... |
 |---|---|---|
-| 1 | Repo scaffold + on-demand ingestion | Given any appid, reviews are fetched, cached in Postgres, min-review-count guard in place |
+| 1 | Repo scaffold + on-demand ingestion | Given any appid, reviews are fetched, cached in Postgres, min-review-count guard in place. **Done 2026-09-24** |
 | 2 | Sentiment baseline | TF-IDF + LogReg trained on `voted_up`, reports accuracy/F1 vs. majority-class baseline |
 | 3 | Aspect anchors + embedding assignment | Sentences tagged with an aspect (or none) via cosine similarity |
 | 4 | Aspect evaluation | 100–150 hand-labeled sentences scored; per-aspect precision/recall documented |
@@ -75,7 +75,7 @@ view Steam's own UI never shows.
 
 ## 9. Open questions
 - Final aspect list — confirm: performance, price, bugs, story, gameplay, other
-- Minimum review count before serving results for a new appid
+- ~~Minimum review count before serving results for a new appid~~ — resolved: 200 usable English reviews (see `DECISIONS.md`)
 - Which 2-3 games to develop/evaluate against before wiring up "any appid"
 
 ## 10. Decisions log
