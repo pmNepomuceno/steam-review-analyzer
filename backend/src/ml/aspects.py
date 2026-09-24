@@ -15,6 +15,7 @@ The model and anchor embeddings are loaded once per process on first use (or eag
 """
 
 import re
+import threading
 from collections.abc import Sequence
 from itertools import pairwise
 from typing import Any
@@ -60,28 +61,32 @@ _LEADING_CONNECTOR = re.compile(
     r"^(?:but|however|although|though|whereas|and|yet|while)\b[,\s]*", re.IGNORECASE
 )
 
+_load_lock = threading.Lock()
 _model: Any = None
 _anchor_emb: np.ndarray | None = None
 _anchor_labels: list[str] = []
 
 
 def load() -> None:
-    """Load the encoder and embed every anchor. Safe to call more than once."""
+    """Load the encoder and embed every anchor. Safe to call more than once, from any thread."""
     global _model, _anchor_emb, _anchor_labels
     # Score columns follow ANCHORS order only while every aspect has an anchor; an empty list
     # would shift every later column onto the wrong name in `label()`.
     if empty := [aspect for aspect, phrases in ANCHORS.items() if not phrases]:
         raise ValueError(f"every aspect needs at least one anchor phrase; empty: {empty}")
-    if _model is not None:
-        return
-    from sentence_transformers import SentenceTransformer  # heavy import (torch)
+    # Background processing runs in worker threads; without the lock two cold runs would
+    # each load the ~90 MB encoder and race on the globals.
+    with _load_lock:
+        if _model is not None:
+            return
+        from sentence_transformers import SentenceTransformer  # heavy import (torch)
 
-    model = SentenceTransformer(EMBEDDING_MODEL_NAME, device="cpu")
-    labels = [aspect for aspect, phrases in ANCHORS.items() for _ in phrases]
-    phrases = [p for ps in ANCHORS.values() for p in ps]
-    _anchor_emb = model.encode(phrases, normalize_embeddings=True, convert_to_numpy=True)
-    _anchor_labels = labels
-    _model = model
+        model = SentenceTransformer(EMBEDDING_MODEL_NAME, device="cpu")
+        labels = [aspect for aspect, phrases in ANCHORS.items() for _ in phrases]
+        phrases = [p for ps in ANCHORS.values() for p in ps]
+        _anchor_emb = model.encode(phrases, normalize_embeddings=True, convert_to_numpy=True)
+        _anchor_labels = labels
+        _model = model
 
 
 def _content_words(piece: str) -> int:

@@ -1,9 +1,9 @@
 """Inference for the TF-IDF + logistic regression sentiment model.
 
 The artifact is produced offline by `backend/scripts/train_sentiment.py`; nothing here
-trains. It is loaded once and cached. Loading is lazy so importing this module works
-without a trained artifact (fresh clone, tests); the API can call `load_model()` at
-startup to load it eagerly.
+trains. It is loaded on first use and cached. Loading is lazy so the module (and the API)
+works without a trained artifact: training needs reviews that only the running API
+ingests, so on a fresh setup the API has to serve before a model exists.
 """
 
 from pathlib import Path
@@ -27,9 +27,14 @@ def load_model(path: Path = SENTIMENT_MODEL_PATH) -> dict[str, Any]:
     return _artifact
 
 
+def ensure_loaded() -> dict[str, Any]:
+    """The cached artifact, loaded on first call. Raises `SentimentModelNotFound` (503)
+    until one is trained, and picks it up without a restart once it is."""
+    return _artifact if _artifact is not None else load_model()
+
+
 def predict(text: str) -> SentimentPrediction:
-    artifact = _artifact if _artifact is not None else load_model()
-    pipeline = artifact["pipeline"]
+    pipeline = ensure_loaded()["pipeline"]
     probs = pipeline.predict_proba([text])[0]
     best = int(probs.argmax())
     voted_up = bool(pipeline.classes_[best])

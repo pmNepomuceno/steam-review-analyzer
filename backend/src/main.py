@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from src.exceptions import AppError
+from src.games.router import router as games_router
 from src.reviews.router import router as reviews_router
 
 
@@ -19,6 +20,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Steam Review Analyzer", lifespan=lifespan)
+app.include_router(games_router)
 app.include_router(reviews_router)
 
 

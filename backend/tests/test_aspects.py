@@ -1,3 +1,6 @@
+import threading
+import time
+
 import numpy as np
 import pytest
 
@@ -121,9 +124,37 @@ def test_load_rejects_an_aspect_without_anchors(monkeypatch):
         aspects.load()
 
 
+def test_concurrent_load_builds_the_encoder_once(monkeypatch):
+    import sentence_transformers
+
+    built = []
+
+    class SlowEncoder:
+        def __init__(self, *args, **kwargs):
+            built.append(self)
+            time.sleep(0.2)  # wide window for a second thread to slip in without the lock
+
+        def encode(self, phrases, **kwargs):
+            return np.zeros((len(phrases), 2))
+
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", SlowEncoder)
+    monkeypatch.setattr(aspects, "_model", None)
+    monkeypatch.setattr(aspects, "_anchor_emb", None)
+    monkeypatch.setattr(aspects, "_anchor_labels", [])
+
+    threads = [threading.Thread(target=aspects.load) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(built) == 1
+
+
 def test_anchor_config_shape():
     assert ASPECTS == ("performance", "price", "bugs", "story", "gameplay")
-    assert all(4 <= len(phrases) <= 6 for phrases in ANCHORS.values())
+    # Anchor counts grow from evaluation findings (M4 added three gameplay anchors), not a
+    # fixed authoring rule; the upper bound only catches a runaway list.
+    assert all(4 <= len(phrases) <= 12 for phrases in ANCHORS.values())
     assert 0.0 < SIMILARITY_THRESHOLD < 1.0
 
 
