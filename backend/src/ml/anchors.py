@@ -36,8 +36,8 @@ ANCHORS: dict[str, list[str]] = {
     "story": [
         "the story is amazing and emotional",
         "the plot and characters are well written",
-        "the ending was disappointing",
-        "the writing and dialogue are boring",
+        "the ending of the story was disappointing",
+        "the plot and dialogue are poorly written",
         "the narrative kept me hooked until the end",
         "the voice acting brings the characters to life",
     ],
@@ -48,6 +48,9 @@ ANCHORS: dict[str, list[str]] = {
         "the puzzles are clever and challenging",
         "lots of weapon and build variety, great replayability",
         "the core mechanics are shallow and boring",
+        "there isn't enough content",
+        "the difficulty scaling is punishing",
+        "the skill and upgrade system is deep",
     ],
 }
 

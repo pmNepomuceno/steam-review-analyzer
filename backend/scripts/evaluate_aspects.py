@@ -56,7 +56,8 @@ from src.ml.aspects import label
 from src.ml.constants import NONE_ASPECT, SIMILARITY_THRESHOLD
 
 REPORT_PATH = EVAL_DIR / "aspect_report.txt"  # tracked in git
-SWEEP = tuple(round(0.30 + 0.02 * i, 2) for i in range(11))  # thresholds tried: 0.30-0.50
+# thresholds tried: 0.30-0.50 in steps of 0.02, plus 0.35 and 0.45 (the +/-0.05 around 0.40)
+SWEEP = tuple(sorted({round(0.30 + 0.02 * i, 2) for i in range(11)} | {0.35, 0.45}))
 LOW_SUPPORT_WARNING = 10  # gold examples below which a class's metrics are very noisy
 SENTENCE_CHARS = 100  # sentences in the list of misses are cut to this length
 YES = {"y", "yes", "x", "true", "1"}

@@ -1,0 +1,134 @@
+Aspect tagging report, generated 2026-09-24 14:18 UTC by backend/scripts/evaluate_aspects.py
+
+=== Data ===
+  140 labeled units from 5 games, 8 flagged ambiguous. Threshold 0.40.
+  Scores: re-scored with the current anchors (changed since the sample was drawn); 9 predictions at 0.40 differ from the key.
+  Gold labels: performance 17, price 14, bugs 12, story 17, gameplay 34, none 46
+
+=== Summary: model vs. majority-class baseline (always "none") ===
+  rows                    n  accuracy       95% CI  macro F1  base acc  base macro F1
+  all                   140     0.621  0.539-0.698     0.658     0.329          0.082
+  unambiguous           132     0.621  0.536-0.699     0.659     0.348          0.086
+  population-weighted   140     0.672                  0.699     0.268          0.070
+  population-weighted: each unit counts for the units of its game and stratum it
+  stands for, so the oversampled hard band stops dominating. An estimate for all
+  cached sentences.
+
+=== Per aspect (all rows unless noted) ===
+  aspect        gold  pred  precision  recall     F1  F1 unamb  F1 pop-wtd
+  performance     17    11      0.909   0.588  0.714     0.714       0.792
+  price           14    14      0.714   0.714  0.714     0.720       0.809
+  bugs            12    12      0.750   0.750  0.750     0.727       0.815
+  story           17    16      0.625   0.588  0.606     0.645       0.558
+  gameplay        34    34      0.618   0.618  0.618     0.590       0.666
+  none            46    53      0.509   0.587  0.545     0.557       0.554
+
+=== Confusion matrix (rows: gold, columns: predicted) ===
+                perfo  price   bugs  story  gamep   none
+  performance      10      0      2      0      1      4
+  price             0     10      0      0      0      4
+  bugs              1      0      9      0      0      2
+  story             0      0      0     10      2      5
+  gameplay          0      0      0      2     21     11
+  none              0      4      1      4     10     27
+
+=== Accuracy by stratum (strata from sampling time) ===
+  near_below               35 units  accuracy 0.543 (0.382-0.695)
+  near_above               35 units  accuracy 0.486 (0.330-0.644)
+  long                     20 units  accuracy 0.600 (0.387-0.781)
+  other                    50 units  accuracy 0.780 (0.648-0.872)
+
+=== Accuracy by game ===
+  Cities: Skylines II      28 units  accuracy 0.500 (0.326-0.674)
+  Hades                    28 units  accuracy 0.714 (0.529-0.847)
+  PAYDAY 3                 28 units  accuracy 0.500 (0.326-0.674)
+  Portal 2                 28 units  accuracy 0.679 (0.493-0.821)
+  Starfield                28 units  accuracy 0.714 (0.529-0.847)
+
+=== Gold none units by topic in notes (a missing aspect shows up here) ===
+  generic               15  predicted: none 6, gameplay 4, story 3, price 2
+  developer              4  predicted: none 4
+  art                    4  predicted: none 2, gameplay 2
+  non-english            3  predicted: none 3
+  joke                   2  predicted: none 2
+  recommendation         2  predicted: gameplay 1, price 1
+  vague                  2  predicted: story 1, none 1
+  updates                1  predicted: bugs 1
+  emotes                 1  predicted: none 1
+  achievements           1  predicted: none 1
+  graphics               1  predicted: none 1
+  add-ons                1  predicted: gameplay 1
+  update                 1  predicted: none 1
+
+=== Threshold sweep (same scores; * = this run) ===
+  threshold  accuracy  macro F1  none prec  none rec  pred none
+       0.30     0.600     0.625      0.583     0.304      17.1%
+       0.32     0.614     0.637      0.586     0.370      20.7%
+       0.34     0.614     0.643      0.553     0.457      27.1%
+       0.35     0.621     0.649      0.561     0.500      29.3%
+       0.36     0.614     0.642      0.548     0.500      30.0%
+       0.38     0.621     0.650      0.542     0.565      34.3%
+ *     0.40     0.621     0.658      0.509     0.587      37.9%
+       0.42     0.614     0.660      0.492     0.674      45.0%
+       0.44     0.614     0.662      0.478     0.717      49.3%  <- best macro F1
+       0.45     0.600     0.649      0.466     0.739      52.1%
+       0.46     0.600     0.641      0.468     0.783      55.0%
+       0.48     0.579     0.597      0.448     0.848      62.1%
+       0.50     0.579     0.590      0.446     0.891      65.7%
+  Picking the threshold here tunes on these 140 units, so the numbers at the picked value are optimistic.
+
+=== Misses (53; ~ = ambiguous) ===
+    id  gold -> predicted         score  stratum     sentence
+    26  bugs -> none              0.384  near_below  and technical struggles I have faced running the game.
+    75  bugs -> none              0.242  long        The connectivity problem wouldnt even be a problem if they would have stick with the same (if i r...
+    18  bugs -> performance       0.619  other       OPTIMIZATION
+    32  gameplay -> none          0.287  long        I do however believe that there is still a lot of things that need to be fixed, added, or tweaked...
+    37  gameplay -> none          0.370  other       Boring a bit.
+    43  gameplay -> none          0.211  long        Proper snapping no longer exists, especially when you want to continue an existing road/train lin...
+    80  gameplay -> none          0.380  near_below  All in all, a game that truly feels free-flow in terms of the way you can go about things.
+    94  gameplay -> none          0.243  long        Why bother starting a new run to roleplay a different path when your character can already be the...
+   100  gameplay -> none          0.374  near_below  They have already updated some of the "old" heists that had some lame/annoying mechanics
+   108  gameplay -> none          0.323  near_below  Completion Difficulty : 6/10
+   113  gameplay -> none          0.200  other       • Can't pick crew guns
+   114  gameplay -> none          0.337  near_below  this game is LEAGUES better than the original portal game (in my opinion), there were many new me...
+   132  gameplay -> none          0.345  near_below  However, I feel like the game leans much more toward raid gameplay than stealth gameplay.
+   138  gameplay -> none          0.210  long        and does nail down the issue of PD2 where if you were trying to control a building you either nee...
+    14  gameplay -> story         0.425  near_above  The entire game feels cold, lifeless and unfinished.
+    48~ gameplay -> story         0.493  near_above  and forms it into a package that also has a strong storyline
+    44  none -> bugs              0.411  near_above  and patches since this game was first released.
+    10  none -> gameplay          0.423  near_above  I love this game so much.
+    13  none -> gameplay          0.464  near_above  a very fun
+    56  none -> gameplay          0.538  long        I wouldn't recommend the game unless you're big on puzzle games of that sort where you sometimes ...
+    82  none -> gameplay          0.489  near_below  and all the player-created content, there’s a LOT of game here.
+    84  none -> gameplay          0.463  near_above  this game was so fun!!!
+    87  none -> gameplay          0.478  near_above  This game is beautiful
+    90  none -> gameplay          0.499  near_above  This game Is AMAZING.
+    92  none -> gameplay          0.520  other       Generally, I think the game will be enjoyable for anyone who enjoys this style of game
+   115  none -> gameplay          0.458  near_above  and is pretty fun at this point now.
+   131  none -> gameplay          0.453  near_above  A part of me likes this game to an extent
+   104  none -> price             0.403  near_above  It is very good
+   120  none -> price             0.417  near_above  Not worth the trouble ...
+   123  none -> price             0.415  near_above  Verdict: 100% would recommend.
+   136  none -> price             0.627  other       super worth it.
+     9  none -> story             0.645  other       Unfortunately, the sequel has been a huge disappointment.
+    22  none -> story             0.449  near_above  and no sequel is going to live up to the hype anyways.
+    27  none -> story             0.422  near_above  terrible game how is it worse than the last
+    79  none -> story             0.568  other       extremely disappointing for this sequel to barely have a reasonable fraction.
+    95  performance -> bugs       0.520  other       and is a very bug free game, good start.
+   121  performance -> bugs       0.630  other       Three years after its release, it has fixed most of its bugs
+    72  performance -> gameplay   0.418  near_above  It looks beautiful, it runs well, it's polished, the difficulty is rewarding, the music is brilli...
+    50  performance -> none       0.337  near_below  and all i can say is that it didnt drop in quality after the 1st
+    77  performance -> none       0.308  near_below  and performance wasn't great either.
+   101  performance -> none       0.293  long        This game is fantastic as if it wasn't said enough times already, can't wait to get into 2 now ve...
+   137  performance -> none       0.397  near_below  lastly, im very happy for the hard work developers put to clean the mess of the launch
+    81~ price -> none             0.383  near_below  Mostly everything is locked behind some sort of DLC or skill set, weapon customization is terribl...
+    93  price -> none             0.369  near_below  i keep playing cause its 50 bucks i spent on this traffic and parking simulator
+   116  price -> none             0.237  other       but you can't use these unless you buy the bridges dlc.
+   118  price -> none             0.314  near_below  and then, finally, decided to buy it in Dec 2025.
+    38  story -> gameplay         0.425  near_above  and playing it on its terms, rahter than what I wanted it to be originally, it's a decent Bethesd...
+    86  story -> gameplay         0.461  near_above  and how they face such different challenges everywhere.
+    19  story -> none             0.259  other       picture this: you are in a future where long distance space travel is possible, all sorts of weap...
+    69  story -> none             0.255  long        The world building in the game is so integral to this idea of testing, which feels real because a...
+    97  story -> none             0.327  near_below  the gels) and added alot more lore to the game than the original.
+   102~ story -> none             0.357  near_below  I could also go on about the uncanny valley NPCs, the lackluster main story, the bad skill system...
+   105  story -> none             0.335  near_below  and honestly, if the game had updated cinematics like SPOILER ALERT!: the moon cinematic
