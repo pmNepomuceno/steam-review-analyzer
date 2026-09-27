@@ -48,7 +48,6 @@ class FailedStatus(BaseModel):
     appid: int
     status: Literal["failed"]
     detail: str  # the reason and retry command for an interrupted run, else a generic line
-    interrupted: bool  # the run's process died, rather than the run raising
 
 
 class AvailableGame(BaseModel):

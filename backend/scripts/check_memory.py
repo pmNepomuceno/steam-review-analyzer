@@ -60,7 +60,7 @@ def worst_case_reviews(n_reviews: int) -> list[tuple[int, str]]:
 
     review = ". ".join([FULL_SEGMENT] * ENCODE_BATCH_SIZE)
     units = aspects._fit_to_encoder(aspects.split_sentences(review))
-    full = sum(len(aspects._fit_tokenizer.encode(u).ids) == MAX_SEQ_LENGTH for u in units)
+    full = sum(len(aspects._tokenizer.encode(u).ids) == MAX_SEQ_LENGTH for u in units)
     assert full >= ENCODE_BATCH_SIZE, f"only {full} full-length units per review"
     return [(i, review) for i in range(n_reviews)]
 

@@ -5,7 +5,6 @@ sentiment artifact nor the sentence-transformer download.
 """
 
 import asyncio
-import time
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -197,23 +196,6 @@ async def test_checking_for_dead_runs_leaves_the_run_lock_free(engine, seeded, m
     assert lock_free_during_check == [True]
 
 
-async def test_analysis_runs_one_at_a_time(monkeypatch):
-    active, peak = 0, 0
-
-    def predict(review_text: str) -> dict:
-        nonlocal active, peak
-        active += 1
-        peak = max(peak, active)
-        time.sleep(0.05)
-        active -= 1
-        return {"label": "positive", "confidence": 0.9}
-
-    monkeypatch.setattr(sentiment, "predict", predict)
-    monkeypatch.setattr(aspects, "assign_aspects", lambda review_text: [])
-    await asyncio.gather(*(asyncio.to_thread(service._analyze, [(i, "x")]) for i in range(4)))
-    assert peak == 1
-
-
 async def test_process_skips_unknown_app(engine, ml_calls):
     async with AsyncSession(engine) as session:
         assert await service.process_reviews(session, APPID) == Skipped.NOT_INGESTED
@@ -372,7 +354,6 @@ async def test_background_failure_answers_failed_not_processing(
         assert resp.status_code == 500
         assert resp.json()["status"] == "failed"
         assert resp.json()["detail"] == constants.GENERIC_FAILURE  # no exception text
-        assert resp.json()["interrupted"] is False
     # The real reason stays server-side: stored on the game and logged.
     assert await game_status(engine) == (AspectStatus.FAILED, "RuntimeError: model exploded")
     assert "model exploded" in caplog.text
@@ -397,7 +378,6 @@ async def test_failure_detail_hides_every_other_reason(client, engine, seeded, s
     ):
         assert resp.status_code == 500
         assert resp.json()["detail"] == constants.GENERIC_FAILURE
-        assert resp.json()["interrupted"] is False
 
 
 async def test_game_being_processed_answers_202_without_a_new_run(client, engine, seeded, ml_calls):
@@ -423,7 +403,6 @@ async def test_run_that_died_while_the_api_is_up_answers_failed(client, engine, 
         assert resp.status_code == 500
         assert resp.json()["status"] == "failed"
         assert constants.INTERRUPTED_ERROR in resp.json()["detail"]  # the reason, not just "failed"
-        assert resp.json()["interrupted"] is True
         assert f"--force {APPID}" in resp.json()["detail"]
     assert await game_status(engine) == (AspectStatus.FAILED, constants.INTERRUPTED_ERROR)
     assert ml_calls == []

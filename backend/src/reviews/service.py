@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import threading
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -15,7 +14,12 @@ from src.config import settings
 from src.games import service as games_service
 from src.games.constants import AspectStatus
 from src.games.models import Game
-from src.games.schemas import AvailableGame, FailedStatus, UnavailableStatus
+from src.games.schemas import (
+    AvailableGame,
+    FailedStatus,
+    ProcessingStatus,
+    UnavailableStatus,
+)
 from src.ml import aspects, sentiment
 from src.ml.anchors import ASPECTS
 from src.ml.constants import NEGATIVE, POSITIVE
@@ -26,12 +30,11 @@ from src.reviews.schemas import ReviewOut
 
 logger = logging.getLogger(__name__)
 
-# One analysis at a time per process: the memory bound (docs/DECISIONS.md) was measured for
-# a single run, and two at once could pass Render's 512 MB.
-_analyze_lock = threading.Lock()
-# Background runs queue here, before `process_reviews` takes any connection, so queued runs
-# can't use up the pool that the active run needs for its writes. `_queued` keeps polling
-# from queueing the same app twice.
+# Background runs queue here, one at a time, before `process_reviews` takes any connection:
+# the memory bound (docs/DECISIONS.md) was measured for a single run, two at once could pass
+# Render's 512 MB, and queued runs can't use up the pool that the active run needs for its
+# writes. The CLI runs games one after another. `_queued` keeps polling from queueing the
+# same app twice.
 _background_lock = asyncio.Lock()
 _queued: set[int] = set()
 
@@ -122,17 +125,7 @@ async def list_reviews(
 
 
 def _analyze(reviews: list[tuple[int, str]]) -> tuple[dict[int, str], list[dict[str, Any]]]:
-    """Sentiment for each whole review, and each review's aspect-tagged units.
-
-    Runs are serialized (`_analyze_lock`). API runs already queue on `_background_lock`.
-    """
-    with _analyze_lock:
-        return _analyze_unlocked(reviews)
-
-
-def _analyze_unlocked(
-    reviews: list[tuple[int, str]],
-) -> tuple[dict[int, str], list[dict[str, Any]]]:
+    """Sentiment for each whole review, and each review's aspect-tagged units."""
     # ponytail: one predict/encode call per review; batching across reviews would be several
     # times faster (known limitation, see DECISIONS.md).
     labels: dict[int, str] = {}
@@ -221,6 +214,9 @@ async def _process_owned(session: AsyncSession, appid: int, force: bool) -> int 
         logger.info("Processing %d reviews for appid %d", len(reviews), appid)
         labels, units = await asyncio.to_thread(_analyze, reviews)  # keep the event loop free
 
+        # The run lock is the real guard; this row lock only orders the writes if that lock's
+        # connection drops mid-run and a second run starts, so their units can't interleave.
+        await session.execute(select(Game.appid).where(Game.appid == appid).with_for_update())
         app_reviews = select(Review.id).where(Review.appid == appid)
         await session.execute(delete(ReviewAspect).where(ReviewAspect.review_id.in_(app_reviews)))
         if labels:
@@ -364,22 +360,18 @@ async def unprocessed_response(session: AsyncSession, game: Game) -> JSONRespons
             appid=appid,
             status="failed",
             detail=_failure_detail(game),
-            interrupted=game.aspects_error == constants.INTERRUPTED_ERROR,
         )
         return JSONResponse(status_code=500, content=body.model_dump())
     task = None
     if game.aspects_status == AspectStatus.PENDING:
         sentiment.ensure_loaded()  # 503 now beats a run that is bound to fail
         task = BackgroundTask(process_in_background, session.bind, appid)
-    return JSONResponse(
-        status_code=202,
-        content={
-            "appid": appid,
-            "status": "processing",
-            "detail": f"Reviews for app {appid} are being analyzed; retry shortly",
-        },
-        background=task,
+    body = ProcessingStatus(
+        appid=appid,
+        status="processing",
+        detail=f"Reviews for app {appid} are being analyzed; retry shortly",
     )
+    return JSONResponse(status_code=202, content=body.model_dump(), background=task)
 
 
 async def aspect_summary(session: AsyncSession, appid: int) -> dict[str, Any]:

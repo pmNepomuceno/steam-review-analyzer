@@ -53,12 +53,12 @@ describe("fetchState", () => {
 
   it("tells a failed analysis apart from other 500s", async () => {
     stubFetch(
-      json(500, { status: "failed", detail: "run --force", interrupted: true }),
+      json(500, { status: "failed", detail: "run --force" }),
       json(500, { status: "failed", detail: "generic" }),
       json(500, "oops"),
     );
-    expect(await fetchState("/x")).toEqual({ kind: "failed", message: "run --force", interrupted: true });
-    expect(await fetchState("/x")).toEqual({ kind: "failed", message: "generic", interrupted: false });
+    expect(await fetchState("/x")).toEqual({ kind: "failed", message: "run --force" });
+    expect(await fetchState("/x")).toEqual({ kind: "failed", message: "generic" });
     expect(await fetchState("/x")).toMatchObject({ kind: "error", status: 500 });
   });
 

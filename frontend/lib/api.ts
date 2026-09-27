@@ -43,9 +43,9 @@ export type AvailableGame = { appid: number; name: string };
 export type Loaded<T> =
   | { kind: "ready"; data: T }
   | { kind: "processing" } // 202: analysis running
-  // 500 status "failed": needs a --force rerun by the owner. `interrupted`: the run's process
-  // died, and `message` says so; otherwise `message` is a generic line.
-  | { kind: "failed"; message: string; interrupted: boolean }
+  // 500 status "failed": needs a --force rerun by the owner. `message` names the reason for an
+  // interrupted run, else it is a generic line.
+  | { kind: "failed"; message: string }
   | { kind: "not_found"; message: string } // 404: Steam has no such app
   // 403 status "unavailable": this deployment only serves games processed ahead of time
   | { kind: "unavailable"; message: string; games: AvailableGame[] }
@@ -74,7 +74,7 @@ export async function fetchState<T>(path: string, signal?: AbortSignal): Promise
     return { kind: "unavailable", message, games };
   }
   if (res.status === 500 && body?.status === "failed") {
-    return { kind: "failed", message, interrupted: body.interrupted === true };
+    return { kind: "failed", message };
   }
   return { kind: "error", status: res.status, message };
 }

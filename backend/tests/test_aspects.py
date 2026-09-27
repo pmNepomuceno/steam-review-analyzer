@@ -135,7 +135,6 @@ def test_load_rejects_an_aspect_without_anchors(monkeypatch):
 class FakeEncoding:
     def __init__(self, n: int):
         self.ids = [1] * n
-        self.attention_mask = [1] * n
 
 
 class FakeTokenizer:
@@ -145,8 +144,6 @@ class FakeTokenizer:
 
     def no_truncation(self): ...
     def no_padding(self): ...
-    def enable_truncation(self, max_length): ...
-    def enable_padding(self): ...
 
     def encode_batch(self, texts):
         return [FakeEncoding(3) for _ in texts]
@@ -175,7 +172,6 @@ def test_concurrent_load_builds_the_encoder_once(monkeypatch):
     monkeypatch.setattr(aspects, "_encoder_threads", lambda: 3)
     monkeypatch.setattr(aspects, "_model", None)
     monkeypatch.setattr(aspects, "_tokenizer", None)
-    monkeypatch.setattr(aspects, "_fit_tokenizer", None)
     monkeypatch.setattr(aspects, "_anchor_emb", None)
     monkeypatch.setattr(aspects, "_anchor_labels", [])
 
@@ -307,7 +303,7 @@ def test_long_unspaced_text_is_cut_to_encoder_limit(model):
     units = aspects._fit_to_encoder(aspects.split_sentences(text))
     limit = MAX_SEQ_LENGTH - 2
     assert len(units) > 1
-    assert all(len(aspects._fit_tokenizer.encode(u, add_special_tokens=False)) <= limit for u in units)
+    assert all(len(aspects._tokenizer.encode(u, add_special_tokens=False)) <= limit for u in units)
     assert "".join(units) == text
     assert len(aspects.assign_aspects(text)) == len(units)
 

@@ -75,8 +75,7 @@ _LEADING_CONNECTOR = re.compile(
 
 _load_lock = threading.Lock()
 _model: Any = None  # onnxruntime.InferenceSession
-_tokenizer: Any = None  # truncates and pads, for encoding
-_fit_tokenizer: Any = None  # neither, for measuring units in `_fit_to_encoder`
+_tokenizer: Any = None  # no truncation or padding: `_encode` pads, `_fit_to_encoder` measures
 _anchor_emb: np.ndarray | None = None
 _anchor_labels: list[str] = []
 
@@ -89,8 +88,14 @@ def _encode(texts: list[str]) -> np.ndarray:
     batches = []
     for i in range(0, len(texts), ENCODE_BATCH_SIZE):
         encodings = _tokenizer.encode_batch([texts[j] for j in order[i : i + ENCODE_BATCH_SIZE]])
-        ids = np.array([e.ids for e in encodings], dtype=np.int64)
-        mask = np.array([e.attention_mask for e in encodings], dtype=np.int64)
+        # Units are already cut to fit (`_fit_to_encoder`); the cap is only a backstop.
+        width = min(max(len(e.ids) for e in encodings), MAX_SEQ_LENGTH)
+        ids = np.zeros((len(encodings), width), dtype=np.int64)  # 0 is [PAD]
+        mask = np.zeros_like(ids)
+        for row, e in enumerate(encodings):
+            n = min(len(e.ids), width)
+            ids[row, :n] = e.ids[:n]
+            mask[row, :n] = 1
         feed = {"input_ids": ids, "attention_mask": mask, "token_type_ids": np.zeros_like(ids)}
         hidden = _model.run(None, feed)[0]  # last_hidden_state, (batch, seq, dim)
         weights = mask[..., None].astype(hidden.dtype)
@@ -136,7 +141,7 @@ def _encoder_threads() -> int:
 
 def load() -> None:
     """Load the encoder and embed every anchor. Safe to call more than once, from any thread."""
-    global _model, _tokenizer, _fit_tokenizer, _anchor_emb, _anchor_labels
+    global _model, _tokenizer, _anchor_emb, _anchor_labels
     # Score columns follow ANCHORS order only while every aspect has an anchor; an empty list
     # would shift every later column onto the wrong name in `label()`.
     if empty := [aspect for aspect, phrases in ANCHORS.items() if not phrases]:
@@ -158,12 +163,9 @@ def load() -> None:
             hf_hub_download(EMBEDDING_MODEL_NAME, f, revision=EMBEDDING_MODEL_REVISION)
             for f in EMBEDDING_MODEL_FILES
         )
-        _fit_tokenizer = Tokenizer.from_file(tokenizer_path)
-        _fit_tokenizer.no_truncation()
-        _fit_tokenizer.no_padding()
         _tokenizer = Tokenizer.from_file(tokenizer_path)
-        _tokenizer.enable_truncation(MAX_SEQ_LENGTH)
-        _tokenizer.enable_padding()
+        _tokenizer.no_truncation()
+        _tokenizer.no_padding()
         options = onnxruntime.SessionOptions()
         options.intra_op_num_threads = threads
         # Idle threads busy-wait for work by default, which burns a fractional-CPU quota.
@@ -212,7 +214,7 @@ def _fit_to_encoder(units: list[str]) -> list[str]:
     limit = MAX_SEQ_LENGTH - 2  # room for [CLS] and [SEP]
     fitted: list[str] = []
     for unit in units:
-        offsets = _fit_tokenizer.encode(unit, add_special_tokens=False).offsets
+        offsets = _tokenizer.encode(unit, add_special_tokens=False).offsets
         if len(offsets) <= limit:
             fitted.append(unit)
             continue
