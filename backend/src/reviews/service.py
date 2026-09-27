@@ -16,7 +16,7 @@ from src.games.constants import AspectStatus
 from src.games.models import Game
 from src.ml import aspects, sentiment
 from src.ml.anchors import ASPECTS
-from src.ml.constants import NEGATIVE, NONE_ASPECT, POSITIVE
+from src.ml.constants import NEGATIVE, POSITIVE
 from src.reviews import constants, ingestion
 from src.reviews.exceptions import InsufficientReviews
 from src.reviews.models import Review, ReviewAspect
@@ -93,7 +93,8 @@ async def list_reviews(
         select(ReviewAspect.review_id, ReviewAspect.aspect_label)
         .where(
             ReviewAspect.review_id.in_([r.id for r in reviews]),
-            ReviewAspect.aspect_label != NONE_ASPECT,
+            # Not "none", nor a label dropped from ANCHORS since the last --force run.
+            ReviewAspect.aspect_label.in_(ASPECTS),
         )
         .distinct()
     )

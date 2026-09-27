@@ -240,6 +240,15 @@ async def test_reviews_carry_their_sentiment_and_aspects(client, engine, seeded,
     filtered = (await client.get(url, params={"aspect": "bugs", "sentiment": "negative"})).json()
     assert filtered["items"] == [items[1]]
 
+    # A label dropped from ANCHORS since processing is left out, not a 500.
+    async with engine.begin() as conn:
+        await conn.execute(
+            update(ReviewAspect).where(ReviewAspect.aspect_label == "price").values(aspect_label="cost")
+        )
+    resp = await client.get(url)
+    assert resp.status_code == 200
+    assert {r["id"]: r["aspects"] for r in resp.json()["items"]}[1] == ["bugs"]
+
 
 async def test_aspects_trend_has_every_day(client, engine, seeded, ml_calls):
     await add_review(engine, 5, "Love it.")  # 2026-08-01, a month before the seeded ones
