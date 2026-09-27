@@ -32,6 +32,10 @@ alembic revision --autogenerate -m "..." # after changing models
 
 Tests create and use a separate `steam_reviews_test` database on the same server (see `tests/conftest.py`).
 
+## Library docs
+
+Always use the Context7 MCP server to look up library and framework documentation (FastAPI, SQLAlchemy, Alembic, Pydantic, scikit-learn, sentence-transformers, Next.js, React, Recharts, Vitest and the like) before writing or changing code that uses them, instead of relying on memory. Resolve the library ID first, then fetch the docs for the specific API or topic in question.
+
 ## What the project is
 
 A web app that takes any Steam appid, fetches and caches its reviews in Postgres, and reports sentiment broken down by aspect (performance, price, bugs, story, gameplay, or none). It is a portfolio piece meant to show a trained classifier and an embedding-based pipeline, so **do not replace the ML components with LLM API calls**.
