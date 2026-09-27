@@ -1,10 +1,10 @@
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import httpx
-from sqlalchemy import delete, exists, func, select, text, update
+from sqlalchemy import Date, cast, delete, exists, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from starlette.background import BackgroundTask
@@ -16,10 +16,11 @@ from src.games.constants import AspectStatus
 from src.games.models import Game
 from src.ml import aspects, sentiment
 from src.ml.anchors import ASPECTS
-from src.ml.constants import NEGATIVE, POSITIVE
+from src.ml.constants import NEGATIVE, NONE_ASPECT, POSITIVE
 from src.reviews import constants, ingestion
 from src.reviews.exceptions import InsufficientReviews
 from src.reviews.models import Review, ReviewAspect
+from src.reviews.schemas import ReviewOut
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +65,8 @@ async def list_reviews(
     offset: int,
     aspect: str | None = None,
     sentiment_label: str | None = None,
-) -> tuple[int, list[Review]]:
-    """A page of the app's reviews, newest first.
+) -> tuple[int, list[ReviewOut]]:
+    """A page of the app's reviews, newest first, each with its stored aspects.
 
     `aspect` keeps reviews with at least one unit tagged with it; `sentiment_label` keeps
     reviews predicted that way. Both need the app to be processed (`process_reviews`).
@@ -87,7 +88,25 @@ async def list_reviews(
         .limit(limit)
         .offset(offset)
     )
-    return total or 0, list(rows)
+    reviews = list(rows)
+    tags = await session.execute(
+        select(ReviewAspect.review_id, ReviewAspect.aspect_label)
+        .where(
+            ReviewAspect.review_id.in_([r.id for r in reviews]),
+            ReviewAspect.aspect_label != NONE_ASPECT,
+        )
+        .distinct()
+    )
+    by_review: dict[int, list[str]] = {}
+    for review_id, label in tags:
+        by_review.setdefault(review_id, []).append(label)
+    items = [
+        ReviewOut.model_validate(r).model_copy(
+            update={"aspects": sorted(by_review.get(r.id, []), key=ASPECTS.index)}
+        )
+        for r in reviews
+    ]
+    return total or 0, items
 
 
 def _analyze(reviews: list[tuple[int, str]]) -> tuple[dict[int, str], list[dict[str, Any]]]:
@@ -236,11 +255,12 @@ def unprocessed_response(engine: AsyncEngine, game: Game) -> JSONResponse:
 
 
 async def aspect_summary(session: AsyncSession, appid: int) -> dict[str, Any]:
-    """Positive/negative counts per aspect for a processed app.
+    """Positive/negative counts per aspect and per day for a processed app.
 
     Counts are distinct reviews, not units: sentiment is predicted per review, so a review
     with three bugs sentences counts once under bugs. `overall` counts every review, also
-    those whose units are all "none" or that have no units at all.
+    those whose units are all "none" or that have no units at all. `trend` has one point
+    per UTC day from the oldest to the newest review, days without reviews included as 0.
     """
     # ponytail: two queries; one GROUP BY GROUPING SETS would do (known limitation, see
     # DECISIONS.md).
@@ -255,12 +275,27 @@ async def aspect_summary(session: AsyncSession, appid: int) -> dict[str, Any]:
         .group_by(ReviewAspect.aspect_label, Review.predicted_sentiment)
     )
     counts = {(label, sent): n for label, sent, n in rows}
-    overall = await session.execute(
-        select(Review.predicted_sentiment, func.count())
+    day = cast(func.timezone("UTC", Review.created_at), Date)
+    daily = await session.execute(
+        select(day, Review.predicted_sentiment, func.count())
         .where(Review.appid == appid)
-        .group_by(Review.predicted_sentiment)
+        .group_by(day, Review.predicted_sentiment)
     )
-    overall_counts = dict(overall.all())
+    by_day: dict[date, dict[str, int]] = {}
+    overall_counts: dict[str, int] = {}
+    for d, sent, n in daily:
+        by_day.setdefault(d, {})[sent] = n
+        overall_counts[sent] = overall_counts.get(sent, 0) + n
+    trend = []
+    if by_day:
+        d, last = min(by_day), max(by_day)
+        while d <= last:
+            trend.append({
+                "date": d,
+                "positive": by_day.get(d, {}).get(POSITIVE, 0),
+                "negative": by_day.get(d, {}).get(NEGATIVE, 0),
+            })
+            d += timedelta(days=1)
 
     def entry(positive: int, negative: int) -> dict[str, Any]:
         total = positive + negative
@@ -282,4 +317,5 @@ async def aspect_summary(session: AsyncSession, appid: int) -> dict[str, Any]:
             }
             for aspect in ASPECTS  # "none" is not one of them
         ],
+        "trend": trend,
     }

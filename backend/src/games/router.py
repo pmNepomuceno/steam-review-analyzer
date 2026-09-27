@@ -28,4 +28,5 @@ async def get_aspects(
     game = await service.get_game(session, appid)
     if game.aspects_status != AspectStatus.DONE:
         return reviews_service.unprocessed_response(session.bind, game)
-    return AspectSummary(**await reviews_service.aspect_summary(session, appid))
+    summary = await reviews_service.aspect_summary(session, appid)
+    return AspectSummary(name=game.name, **summary)

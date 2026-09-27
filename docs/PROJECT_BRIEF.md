@@ -51,8 +51,8 @@ view Steam's own UI never shows.
 - `review_aspects`: review_id (FK), sentence_text, aspect_label, similarity_score (predicted_sentiment moved to `reviews` on 2026-09-24, see DECISIONS.md)
 
 ## 6. Key screens / API endpoints
-- `GET /games/{appid}/aspects` — aggregated per-aspect sentiment
-- `GET /games/{appid}/reviews` — filterable review list (by aspect, sentiment)
+- `GET /games/{appid}/aspects` — aggregated per-aspect sentiment, plus reviews per day by sentiment (`trend`)
+- `GET /games/{appid}/reviews` — filterable review list (by aspect, sentiment); each review carries its predicted sentiment and aspects
 - Ingestion triggers lazily on first `GET` for an unseen appid
 - Frontend: game selector → per-game dashboard (aspect chart, trend, filtered review list)
 
@@ -64,7 +64,7 @@ view Steam's own UI never shows.
 | 3 | Aspect anchors + embedding assignment | Sentences tagged with an aspect (or none) via cosine similarity. **Done 2026-09-24** (standalone `assign_aspects()`; persistence deferred to M5; threshold 0.40 pending M4) |
 | 4 | Aspect evaluation | 100–150 hand-labeled sentences scored; per-aspect precision/recall documented. **Done 2026-09-24** (140 hand labels; after anchor tuning accuracy 0.621, macro F1 0.658, optimistic because tuned on the same set; see DECISIONS.md) |
 | 5 | Aggregation + API | `/games/{appid}/aspects` and `/games/{appid}/reviews` return real data. **Done 2026-09-24** (results stored in `review_aspects` by a batch pass, `scripts/process_reviews.py`, or by a background task on first request; see DECISIONS.md) |
-| 6 | Dashboard | Selector, aspect chart, trend chart, filterable review list against live API |
+| 6 | Dashboard | Selector, aspect chart, trend chart, filterable review list against live API. **Done 2026-09-27** (Next.js app in `frontend/`; `/aspects` gained a daily `trend`, `/reviews` items their sentiment and aspects; see DECISIONS.md) |
 | 7 | Polish, deploy, stretch goal | Live URL works, README has eval results; fine-tune DistilBERT if time allows |
 
 ## 8. Constraints and risks
@@ -77,7 +77,7 @@ view Steam's own UI never shows.
 - Final aspect list — confirm: performance, price, bugs, story, gameplay, other
 - ~~Minimum review count before serving results for a new appid~~ — resolved: 200 usable English reviews (see `DECISIONS.md`)
 - Which 2-3 games to develop/evaluate against before wiring up "any appid"
-- Review sample: ingestion currently takes only the ~1000 most recent reviews and never refreshes, so results reflect recent opinion over a 1-3 month window. Decide before M6 whether that's the intended scope (and label it in the UI), or whether to sample across the game's lifetime and/or refresh stale caches (see `DECISIONS.md`)
+- ~~Review sample: ingestion currently takes only the ~1000 most recent reviews and never refreshes~~ — resolved 2026-09-27: kept as intended scope (recent opinion) and labelled in the dashboard (see `DECISIONS.md`)
 
 ## 10. Decisions log
 | Date | Decision | Reason |

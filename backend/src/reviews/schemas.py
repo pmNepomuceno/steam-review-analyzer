@@ -13,6 +13,8 @@ class ReviewOut(BaseModel):
     playtime_forever: int
     language: str
     created_at: datetime
+    predicted_sentiment: str | None  # None until the game is processed
+    aspects: list[str] = []  # distinct aspects of the review's units, "none" left out
 
 
 class ReviewPage(BaseModel):
