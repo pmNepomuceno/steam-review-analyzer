@@ -1,9 +1,9 @@
 """Sentence-level aspect tagging by cosine similarity to anchor phrases.
 
 A review is split into sentence/clause units (rule-based, see `split_sentences`), each unit
-is embedded with a sentence-transformer, and it is tagged with the aspect whose anchors
-(`anchors.ANCHORS`) it is most similar to, or "none" when even the best match is below
-`SIMILARITY_THRESHOLD`.
+is embedded with a sentence-transformer model (its ONNX export, run on onnxruntime without
+torch), and it is tagged with the aspect whose anchors (`anchors.ANCHORS`) it is most similar
+to, or "none" when even the best match is below `SIMILARITY_THRESHOLD`.
 
 Scoring: an aspect's score is the max cosine over its anchors, and the highest-scoring
 aspect wins outright, with no margin rule. So a sentence that fits two aspects about
@@ -14,23 +14,35 @@ The model and anchor embeddings are loaded once per process on first use (or eag
 `load()`), never per call, so importing this module stays cheap and works offline.
 """
 
+import logging
+import math
+import os
 import re
 import threading
 from collections.abc import Sequence
 from itertools import pairwise
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from src.config import settings
 from src.ml.anchors import ANCHORS, ASPECTS
 from src.ml.constants import (
+    EMBEDDING_MODEL_FILES,
     EMBEDDING_MODEL_NAME,
+    EMBEDDING_MODEL_REVISION,
+    ENCODE_BATCH_SIZE,
+    ENCODER_MAX_THREADS,
     MAX_SEGMENT_WORDS,
+    MAX_SEQ_LENGTH,
     MIN_CLAUSE_WORDS,
     NONE_ASPECT,
     SIMILARITY_THRESHOLD,
 )
 from src.ml.schemas import AspectAssignment
+
+logger = logging.getLogger(__name__)
 
 # Steam reviews use BBCode. List items, headings and newlines become sentence boundaries;
 # the other known tags are dropped and their text kept. Only real Steam tag names match
@@ -62,14 +74,74 @@ _LEADING_CONNECTOR = re.compile(
 )
 
 _load_lock = threading.Lock()
-_model: Any = None
+_model: Any = None  # onnxruntime.InferenceSession
+_tokenizer: Any = None  # no truncation or padding: `_encode` pads, `_fit_to_encoder` measures
 _anchor_emb: np.ndarray | None = None
 _anchor_labels: list[str] = []
 
 
+def _encode(texts: list[str]) -> np.ndarray:
+    """L2-normalized sentence embeddings: the model's Transformer -> mean Pooling -> Normalize."""
+    # Batch texts of similar length together, as sentence-transformers does, so little of each
+    # batch is padding; the rows are put back in input order at the end.
+    order = np.argsort([-len(t) for t in texts], kind="stable")
+    batches = []
+    for i in range(0, len(texts), ENCODE_BATCH_SIZE):
+        encodings = _tokenizer.encode_batch([texts[j] for j in order[i : i + ENCODE_BATCH_SIZE]])
+        # Units are already cut to fit (`_fit_to_encoder`); the cap is only a backstop.
+        width = min(max(len(e.ids) for e in encodings), MAX_SEQ_LENGTH)
+        ids = np.zeros((len(encodings), width), dtype=np.int64)  # 0 is [PAD]
+        mask = np.zeros_like(ids)
+        for row, e in enumerate(encodings):
+            n = min(len(e.ids), width)
+            ids[row, :n] = e.ids[:n]
+            mask[row, :n] = 1
+        feed = {"input_ids": ids, "attention_mask": mask, "token_type_ids": np.zeros_like(ids)}
+        hidden = _model.run(None, feed)[0]  # last_hidden_state, (batch, seq, dim)
+        weights = mask[..., None].astype(hidden.dtype)
+        pooled = (hidden * weights).sum(axis=1) / np.clip(weights.sum(axis=1), 1e-9, None)
+        batches.append(pooled / np.clip(np.linalg.norm(pooled, axis=1, keepdims=True), 1e-12, None))
+    embeddings = np.concatenate(batches)
+    embeddings[order] = embeddings.copy()
+    return embeddings
+
+
+def _cpu_quota(cgroup: Path = Path("/sys/fs/cgroup")) -> float | None:
+    """CPUs this container may use by its cgroup quota (v2, then v1); None if unlimited/unknown."""
+    try:
+        quota, period = (cgroup / "cpu.max").read_text().split()
+        return None if quota == "max" else int(quota) / int(period)
+    except (OSError, ValueError):
+        pass
+    try:
+        quota = int((cgroup / "cpu" / "cpu.cfs_quota_us").read_text())
+        period = int((cgroup / "cpu" / "cpu.cfs_period_us").read_text())
+        return None if quota < 0 else quota / period
+    except (OSError, ValueError):
+        return None
+
+
+def _usable_cpus() -> int:
+    """CPUs this process may run on (cpuset/affinity aware, unlike os.cpu_count())."""
+    if hasattr(os, "sched_getaffinity"):  # not on macOS
+        return len(os.sched_getaffinity(0))
+    return os.cpu_count() or 1
+
+
+def _encoder_threads() -> int:
+    """ENCODER_THREADS if set, else the usable CPUs, lowered to the CPU quota rounded up, capped."""
+    if settings.encoder_threads is not None:
+        return settings.encoder_threads
+    # Affinity sees a --cpuset-cpus limit but not a CFS quota, so check both.
+    cpus = _usable_cpus()
+    if quota := _cpu_quota():
+        cpus = min(cpus, math.ceil(quota))
+    return min(cpus, ENCODER_MAX_THREADS)
+
+
 def load() -> None:
     """Load the encoder and embed every anchor. Safe to call more than once, from any thread."""
-    global _model, _anchor_emb, _anchor_labels
+    global _model, _tokenizer, _anchor_emb, _anchor_labels
     # Score columns follow ANCHORS order only while every aspect has an anchor; an empty list
     # would shift every later column onto the wrong name in `label()`.
     if empty := [aspect for aspect, phrases in ANCHORS.items() if not phrases]:
@@ -77,16 +149,35 @@ def load() -> None:
     # Background processing runs in worker threads; without the lock two cold runs would
     # each load the ~90 MB encoder and race on the globals.
     with _load_lock:
-        if _model is not None:
+        if _anchor_emb is not None:  # set last, so a failed load is retried
             return
-        from sentence_transformers import SentenceTransformer  # heavy import (torch)
+        threads = _encoder_threads()
+        # The tokenizers library batches on a Rayon pool sized to every host core, built on
+        # first use; give it the same cap as onnxruntime unless set explicitly.
+        os.environ.setdefault("RAYON_NUM_THREADS", str(threads))
+        import onnxruntime
+        from huggingface_hub import hf_hub_download
+        from tokenizers import Tokenizer
 
-        model = SentenceTransformer(EMBEDDING_MODEL_NAME, device="cpu")
+        model_path, tokenizer_path = (
+            hf_hub_download(EMBEDDING_MODEL_NAME, f, revision=EMBEDDING_MODEL_REVISION)
+            for f in EMBEDDING_MODEL_FILES
+        )
+        _tokenizer = Tokenizer.from_file(tokenizer_path)
+        _tokenizer.no_truncation()
+        _tokenizer.no_padding()
+        options = onnxruntime.SessionOptions()
+        options.intra_op_num_threads = threads
+        # Idle threads busy-wait for work by default, which burns a fractional-CPU quota.
+        options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+        logger.info("Aspect encoder uses %d thread(s)", options.intra_op_num_threads)
+        _model = onnxruntime.InferenceSession(
+            model_path, options, providers=["CPUExecutionProvider"]
+        )
         labels = [aspect for aspect, phrases in ANCHORS.items() for _ in phrases]
         phrases = [p for ps in ANCHORS.values() for p in ps]
-        _anchor_emb = model.encode(phrases, normalize_embeddings=True, convert_to_numpy=True)
         _anchor_labels = labels
-        _model = model
+        _anchor_emb = _encode(phrases)
 
 
 def _content_words(piece: str) -> int:
@@ -120,12 +211,10 @@ def _fit_to_encoder(units: list[str]) -> list[str]:
     URLs, keyboard mashing) can be one "word" of hundreds of wordpieces, which the encoder
     would silently truncate. Chunks run from one token start to the next, so no text is lost.
     """
-    limit = _model.max_seq_length - 2  # room for [CLS] and [SEP]
+    limit = MAX_SEQ_LENGTH - 2  # room for [CLS] and [SEP]
     fitted: list[str] = []
     for unit in units:
-        offsets = _model.tokenizer(
-            unit, add_special_tokens=False, return_offsets_mapping=True
-        )["offset_mapping"]
+        offsets = _tokenizer.encode(unit, add_special_tokens=False).offsets
         if len(offsets) <= limit:
             fitted.append(unit)
             continue
@@ -208,7 +297,7 @@ def score_units(units: list[str]) -> np.ndarray:
     if not units:
         return np.empty((0, len(ASPECTS)))
     load()
-    emb = _model.encode(units, normalize_embeddings=True, convert_to_numpy=True)
+    emb = _encode(units)
     return _aspect_scores(emb, _anchor_emb, _anchor_labels)[1]
 
 

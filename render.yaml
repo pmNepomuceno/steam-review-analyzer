@@ -1,0 +1,21 @@
+# Render Blueprint for the API. The dashboard (frontend/) deploys to Vercel with API_URL set
+# to this service's URL. Database values are entered in the Render dashboard on import
+# (sync: false) and are never committed.
+services:
+  - type: web
+    name: steam-review-analyzer-api
+    runtime: docker
+    plan: free
+    rootDir: backend # build context and Dockerfile location; also limits auto-deploys to backend changes
+    healthCheckPath: /health
+    envVars:
+      # Neon pooled endpoint, asyncpg form: postgresql+asyncpg://USER:PASSWORD@HOST-pooler/DB?ssl=require
+      - key: DATABASE_URL
+        sync: false
+      # Neon direct endpoint, same form without "-pooler"; used by alembic on container start
+      - key: DATABASE_URL_DIRECT
+        sync: false
+      # At 0.1 CPU one game takes 14-19 min to analyze and Render spins an idle free instance
+      # down after 15 min, so the demo serves only games processed ahead of time (README).
+      - key: ALLOW_ON_DEMAND_PROCESSING
+        value: "false"

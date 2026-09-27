@@ -30,10 +30,13 @@ async def get_reviews(
     aspect: Annotated[Literal[ASPECTS] | None, Query()] = None,
     sentiment: Annotated[Literal[POSITIVE, NEGATIVE] | None, Query()] = None,
 ) -> ReviewPage | JSONResponse:
-    await service.ensure_ingested(session, http, appid)
-    if aspect is not None or sentiment is not None:
+    game = await games_service.get_game(session, appid)
+    if (blocked := await service.on_demand_blocked(session, appid, game)) is not None:
+        return blocked
+    if not games_service.is_ingested(game):
+        await service.ensure_ingested(session, http, appid)
         game = await games_service.get_game(session, appid)
-        if game.aspects_status != AspectStatus.DONE:
-            return service.unprocessed_response(session.bind, game)
+    if (aspect is not None or sentiment is not None) and game.aspects_status != AspectStatus.DONE:
+        return await service.unprocessed_response(session, game)
     total, items = await service.list_reviews(session, appid, limit, offset, aspect, sentiment)
     return ReviewPage(appid=appid, total=total, limit=limit, offset=offset, items=items)

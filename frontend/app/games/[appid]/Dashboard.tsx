@@ -57,9 +57,9 @@ export default function Dashboard({ appid }: { appid: number }) {
     case "failed":
       return (
         <Status title="Analysis failed" error>
-          Analyzing this game&apos;s reviews failed on the server. Rerun it with{" "}
-          <code>python scripts/process_reviews.py --force {appid}</code>, then{" "}
-          <button onClick={retry}>check again</button>.
+          {/* No retry button: a failed game stays failed until the owner reruns it with
+              --force, which no visitor can do. */}
+          {state.message}
         </Status>
       );
     case "not_found":
@@ -69,6 +69,24 @@ export default function Dashboard({ appid }: { appid: number }) {
           <div style={{ display: "flex", justifyContent: "center", marginTop: 16 }}>
             <AppidForm />
           </div>
+        </Status>
+      );
+    case "unavailable":
+      return (
+        <Status title="Not in this demo">
+          {state.message}
+          {state.games.length > 0 && (
+            <>
+              <p>Available games:</p>
+              <ul>
+                {state.games.map((g) => (
+                  <li key={g.appid}>
+                    <Link href={`/games/${g.appid}`}>{g.name}</Link>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </Status>
       );
     case "error":

@@ -4,11 +4,12 @@ The ML functions are replaced with keyword fakes, so these tests need neither th
 sentiment artifact nor the sentence-transformer download.
 """
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.games.constants import AspectStatus
@@ -129,12 +130,70 @@ async def test_rerun_is_a_noop_and_force_replaces(engine, seeded, ml_calls):
 
 async def test_process_skips_a_game_another_worker_claimed(engine, seeded, ml_calls):
     await set_status(engine, AspectStatus.PROCESSING)
-    assert await process(engine) == Skipped.IN_PROGRESS
+    assert await process(engine) == Skipped.INTERRUPTED
     assert ml_calls == []
     assert await unit_count(engine) == 0
 
     assert await process(engine, force=True) == 4  # takes over a worker that died
     assert (await game_status(engine))[0] == AspectStatus.DONE
+
+
+async def test_startup_fails_interrupted_runs_only(engine, seeded, ml_calls):
+    await set_status(engine, AspectStatus.PROCESSING)
+    async with AsyncSession(engine) as session:
+        session.add(Game(appid=7, name="Done", aspects_status=AspectStatus.DONE))
+        await session.commit()
+
+    async with AsyncSession(engine) as session:
+        assert await service.fail_interrupted_runs(session) == 1
+    async with engine.connect() as conn:
+        rows = (await conn.execute(select(Game.appid, Game.aspects_status, Game.aspects_error))).all()
+    assert sorted(rows) == [
+        (7, AspectStatus.DONE, None),
+        (APPID, AspectStatus.FAILED, constants.INTERRUPTED_ERROR),
+    ]
+
+
+async def test_a_live_run_is_neither_failed_at_startup_nor_taken_over(engine, seeded, ml_calls):
+    # Another process (a CLI --force run, or a second API instance) is running this game.
+    await set_status(engine, AspectStatus.PROCESSING)
+    async with engine.connect() as other:
+        await other.execute(
+            text("SELECT pg_advisory_xact_lock(:ns, :appid)"),
+            {"ns": constants.PROCESS_LOCK_NAMESPACE, "appid": APPID},
+        )
+        async with AsyncSession(engine) as session:
+            assert await service.fail_interrupted_runs(session) == 0
+        assert await process(engine, force=True) == Skipped.RUNNING
+        assert (await game_status(engine))[0] == AspectStatus.PROCESSING
+        assert ml_calls == []
+
+    # That process died: its lock is gone, so the game counts as interrupted.
+    async with AsyncSession(engine) as session:
+        assert await service.fail_interrupted_runs(session) == 1
+
+
+async def test_checking_for_dead_runs_leaves_the_run_lock_free(engine, seeded, monkeypatch):
+    # A poll checks a "processing" game while a --force run is starting: the check must not
+    # hold the run lock, or the run skips itself as RUNNING with nothing running.
+    await set_status(engine, AspectStatus.PROCESSING)
+    lock_free_during_check = []
+    async with AsyncSession(engine) as session:
+        commit = session.commit
+
+        async def commit_after_trying_the_lock():
+            async with engine.connect() as run:
+                lock_free_during_check.append(
+                    await run.scalar(
+                        text("SELECT pg_try_advisory_xact_lock(:ns, :appid)"),
+                        {"ns": constants.PROCESS_LOCK_NAMESPACE, "appid": APPID},
+                    )
+                )
+            await commit()
+
+        monkeypatch.setattr(session, "commit", commit_after_trying_the_lock)
+        assert await service.fail_interrupted_runs(session, APPID) == 1
+    assert lock_free_during_check == [True]
 
 
 async def test_process_skips_unknown_app(engine, ml_calls):
@@ -280,7 +339,7 @@ async def test_reviews_filter_on_unprocessed_game_returns_202(client, seeded, ml
 
 
 async def test_background_failure_answers_failed_not_processing(
-    client, engine, seeded, ml_calls, monkeypatch
+    client, engine, seeded, ml_calls, monkeypatch, caplog
 ):
     def broken(review_text: str) -> dict:
         raise RuntimeError("model exploded")
@@ -294,16 +353,91 @@ async def test_background_failure_answers_failed_not_processing(
     ):
         assert resp.status_code == 500
         assert resp.json()["status"] == "failed"
-        assert "--force" in resp.json()["detail"]
-    assert (await game_status(engine))[0] == AspectStatus.FAILED
+        assert resp.json()["detail"] == constants.GENERIC_FAILURE  # no exception text
+    # The real reason stays server-side: stored on the game and logged.
+    assert await game_status(engine) == (AspectStatus.FAILED, "RuntimeError: model exploded")
+    assert "model exploded" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        None,
+        "OperationalError: connection to 10.0.0.5 failed",
+        f"{constants.INTERRUPTED_ERROR} (edited)",  # only the exact interrupted reason shows
+    ],
+)
+async def test_failure_detail_hides_every_other_reason(client, engine, seeded, stored):
+    async with engine.begin() as conn:
+        await conn.execute(
+            update(Game).values(aspects_status=AspectStatus.FAILED, aspects_error=stored)
+        )
+    for resp in (
+        await client.get(f"/games/{APPID}/aspects"),
+        await client.get(f"/games/{APPID}/reviews", params={"sentiment": "positive"}),
+    ):
+        assert resp.status_code == 500
+        assert resp.json()["detail"] == constants.GENERIC_FAILURE
 
 
 async def test_game_being_processed_answers_202_without_a_new_run(client, engine, seeded, ml_calls):
     await set_status(engine, AspectStatus.PROCESSING)
-    resp = await client.get(f"/games/{APPID}/aspects")
-    assert resp.status_code == 202
+    async with engine.connect() as other:  # a live run holds the run lock
+        await other.execute(
+            text("SELECT pg_advisory_xact_lock(:ns, :appid)"),
+            {"ns": constants.PROCESS_LOCK_NAMESPACE, "appid": APPID},
+        )
+        resp = await client.get(f"/games/{APPID}/aspects")
+        assert resp.status_code == 202
+        assert ml_calls == []
+        assert (await game_status(engine))[0] == AspectStatus.PROCESSING
+
+
+async def test_run_that_died_while_the_api_is_up_answers_failed(client, engine, seeded, ml_calls):
+    # "processing" with nobody holding the run lock: e.g. a Ctrl-C'd CLI run.
+    await set_status(engine, AspectStatus.PROCESSING)
+    for resp in (
+        await client.get(f"/games/{APPID}/aspects"),
+        await client.get(f"/games/{APPID}/reviews", params={"aspect": "bugs"}),
+    ):
+        assert resp.status_code == 500
+        assert resp.json()["status"] == "failed"
+        assert constants.INTERRUPTED_ERROR in resp.json()["detail"]  # the reason, not just "failed"
+        assert f"--force {APPID}" in resp.json()["detail"]
+    assert await game_status(engine) == (AspectStatus.FAILED, constants.INTERRUPTED_ERROR)
     assert ml_calls == []
-    assert (await game_status(engine))[0] == AspectStatus.PROCESSING
+
+
+async def test_queued_background_runs_wait_before_touching_the_db(engine, monkeypatch):
+    started: list[int] = []
+    release = asyncio.Event()
+
+    async def fake_process(session, appid, force=False):
+        started.append(appid)
+        await release.wait()
+
+    monkeypatch.setattr(service, "process_reviews", fake_process)
+    monkeypatch.setattr(service, "_background_lock", asyncio.Lock())  # bound to this loop
+    tasks = [
+        asyncio.create_task(service.process_in_background(engine, appid)) for appid in (1, 2, 1)
+    ]
+    await asyncio.sleep(0.05)
+    assert started == [1]  # 2 waits without a connection; the second 1 is dropped
+    release.set()
+    await asyncio.gather(*tasks)
+    assert started == [1, 2]
+    assert service._queued == set()
+
+
+async def test_api_starts_when_the_startup_db_check_fails(monkeypatch):
+    from src import main
+
+    async def unreachable(session):
+        raise OSError("database is waking up")
+
+    monkeypatch.setattr(main, "fail_interrupted_runs", unreachable)
+    async with main.lifespan(main.app):
+        pass
 
 
 async def test_missing_sentiment_model_answers_503(client, engine, seeded, monkeypatch, tmp_path):
@@ -357,3 +491,39 @@ async def test_aspects_unknown_app_matches_reviews_404(client, steam):
     reviews_resp = await client.get("/games/999/reviews")
     assert aspects_resp.status_code == reviews_resp.status_code == 404
     assert aspects_resp.json() == reviews_resp.json() == {"detail": "Steam has no app with appid 999"}
+
+
+async def test_on_demand_off_serves_only_processed_games(
+    client, engine, seeded, ml_calls, steam, monkeypatch
+):
+    from src.config import settings
+
+    monkeypatch.setattr(settings, "allow_on_demand_processing", False)
+    async with AsyncSession(engine) as session:
+        session.add(Game(appid=620, name="Portal 2", aspects_status=AspectStatus.DONE))
+        await session.commit()
+
+    for path in (f"/games/{APPID}/aspects", f"/games/{APPID}/reviews", "/games/999/aspects"):
+        res = await client.get(path)
+        assert res.status_code == 403, path
+        assert res.json()["status"] == "unavailable"
+        assert res.json()["available"] == [{"appid": 620, "name": "Portal 2"}]
+    assert ml_calls == []  # nothing was queued
+    assert not steam.calls  # an unknown appid never reaches Steam
+    async with engine.connect() as conn:
+        status = await conn.scalar(select(Game.aspects_status).where(Game.appid == APPID))
+    assert status == AspectStatus.PENDING
+
+    await set_status(engine, AspectStatus.DONE)  # a pre-processed game is served as usual
+    assert (await client.get(f"/games/{APPID}/aspects")).status_code == 200
+    # A rerun (processing) or a failed run shows its own screen, not "unavailable".
+    await set_status(engine, AspectStatus.PROCESSING)
+    async with engine.connect() as other:  # a live run holds the run lock
+        await other.execute(
+            text("SELECT pg_advisory_xact_lock(:ns, :appid)"),
+            {"ns": constants.PROCESS_LOCK_NAMESPACE, "appid": APPID},
+        )
+        assert (await client.get(f"/games/{APPID}/aspects")).status_code == 202
+    await set_status(engine, AspectStatus.FAILED)
+    assert (await client.get(f"/games/{APPID}/aspects")).status_code == 500
+    assert ml_calls == []

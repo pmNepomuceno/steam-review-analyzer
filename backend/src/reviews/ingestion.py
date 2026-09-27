@@ -45,8 +45,15 @@ async def fetch_app_name(http: httpx.AsyncClient, appid: int) -> str:
     payload = await _get_json(
         http, constants.APPDETAILS_URL, {"appids": appid, "filters": "basic"}
     )
+    # One appid is requested, so there is one entry. Steam no longer always keys it by that
+    # appid (Hades, 1145360, comes back under 1206340), so fall back to the only entry, but
+    # only if its data names the requested app.
     entry = payload.get(str(appid)) if isinstance(payload, dict) else None
-    if not entry or not entry.get("success"):
+    if entry is None and isinstance(payload, dict) and len(payload) == 1:
+        [entry] = payload.values()
+        if not isinstance(entry, dict) or (entry.get("data") or {}).get("steam_appid") != appid:
+            entry = None
+    if not isinstance(entry, dict) or not entry.get("success"):
         raise GameNotFound(appid)
     name = (entry.get("data") or {}).get("name")
     if not name:

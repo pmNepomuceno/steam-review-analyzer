@@ -38,11 +38,17 @@ export type ReviewPage = {
   items: Review[];
 };
 
+export type AvailableGame = { appid: number; name: string };
+
 export type Loaded<T> =
   | { kind: "ready"; data: T }
   | { kind: "processing" } // 202: analysis running
-  | { kind: "failed"; message: string } // 500 status "failed": analysis crashed, needs --force
+  // 500 status "failed": needs a --force rerun by the owner. `message` names the reason for an
+  // interrupted run, else it is a generic line.
+  | { kind: "failed"; message: string }
   | { kind: "not_found"; message: string } // 404: Steam has no such app
+  // 403 status "unavailable": this deployment only serves games processed ahead of time
+  | { kind: "unavailable"; message: string; games: AvailableGame[] }
   | { kind: "timeout" } // still processing after maxWaitMs
   | { kind: "error"; status: number | null; message: string }; // 422, 502, 503, network, ...
 
@@ -63,7 +69,13 @@ export async function fetchState<T>(path: string, signal?: AbortSignal): Promise
   if (res.status === 202) return { kind: "processing" };
   const message = typeof body?.detail === "string" ? body.detail : `Request failed (${res.status})`;
   if (res.status === 404) return { kind: "not_found", message };
-  if (res.status === 500 && body?.status === "failed") return { kind: "failed", message };
+  if (res.status === 403 && body?.status === "unavailable") {
+    const games = Array.isArray(body.available) ? (body.available as AvailableGame[]) : [];
+    return { kind: "unavailable", message, games };
+  }
+  if (res.status === 500 && body?.status === "failed") {
+    return { kind: "failed", message };
+  }
   return { kind: "error", status: res.status, message };
 }
 
@@ -86,7 +98,7 @@ export async function poll<T>(
       onUpdate?.(state);
       return state;
     }
-    // A worker killed mid-run leaves the game "processing" for good (see DECISIONS.md).
+    // The API fails a game whose run died, but a run can legitimately outlast any wait here.
     if (Date.now() + intervalMs > deadline) {
       onUpdate?.({ kind: "timeout" });
       return { kind: "timeout" };

@@ -1,12 +1,20 @@
+import os
 import threading
 import time
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
+from src.config import Settings
 from src.ml import aspects
 from src.ml.anchors import ANCHORS, ASPECTS
-from src.ml.constants import MAX_SEGMENT_WORDS, NONE_ASPECT, SIMILARITY_THRESHOLD
+from src.ml.constants import (
+    MAX_SEGMENT_WORDS,
+    MAX_SEQ_LENGTH,
+    NONE_ASPECT,
+    SIMILARITY_THRESHOLD,
+)
 
 TARGET = (
     "The story is incredible but it crashes every 20 minutes and the price is way too "
@@ -124,8 +132,27 @@ def test_load_rejects_an_aspect_without_anchors(monkeypatch):
         aspects.load()
 
 
+class FakeEncoding:
+    def __init__(self, n: int):
+        self.ids = [1] * n
+
+
+class FakeTokenizer:
+    @classmethod
+    def from_file(cls, path):
+        return cls()
+
+    def no_truncation(self): ...
+    def no_padding(self): ...
+
+    def encode_batch(self, texts):
+        return [FakeEncoding(3) for _ in texts]
+
+
 def test_concurrent_load_builds_the_encoder_once(monkeypatch):
-    import sentence_transformers
+    import huggingface_hub
+    import onnxruntime
+    import tokenizers
 
     built = []
 
@@ -134,11 +161,17 @@ def test_concurrent_load_builds_the_encoder_once(monkeypatch):
             built.append(self)
             time.sleep(0.2)  # wide window for a second thread to slip in without the lock
 
-        def encode(self, phrases, **kwargs):
-            return np.zeros((len(phrases), 2))
+        def run(self, outputs, feed):
+            return [np.ones((*feed["input_ids"].shape, 2), dtype=np.float32)]
 
-    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", SlowEncoder)
+    # Fully offline: no HF download, no tokenizer file.
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda repo, f, revision: f)
+    monkeypatch.setattr(tokenizers, "Tokenizer", FakeTokenizer)
+    monkeypatch.setattr(onnxruntime, "InferenceSession", SlowEncoder)
+    monkeypatch.delenv("RAYON_NUM_THREADS", raising=False)  # restored after the test
+    monkeypatch.setattr(aspects, "_encoder_threads", lambda: 3)
     monkeypatch.setattr(aspects, "_model", None)
+    monkeypatch.setattr(aspects, "_tokenizer", None)
     monkeypatch.setattr(aspects, "_anchor_emb", None)
     monkeypatch.setattr(aspects, "_anchor_labels", [])
 
@@ -148,6 +181,42 @@ def test_concurrent_load_builds_the_encoder_once(monkeypatch):
     for t in threads:
         t.join()
     assert len(built) == 1
+    assert os.environ["RAYON_NUM_THREADS"] == "3"  # the tokenizer gets the encoder's cap
+
+
+def test_cpu_quota_reads_cgroup_v2_and_v1(tmp_path):
+    assert aspects._cpu_quota(tmp_path) is None  # no cgroup files: unknown
+    (tmp_path / "cpu").mkdir()
+    (tmp_path / "cpu" / "cpu.cfs_quota_us").write_text("-1\n")
+    (tmp_path / "cpu" / "cpu.cfs_period_us").write_text("100000\n")
+    assert aspects._cpu_quota(tmp_path) is None  # v1, unlimited
+    (tmp_path / "cpu" / "cpu.cfs_quota_us").write_text("250000\n")
+    assert aspects._cpu_quota(tmp_path) == 2.5
+    (tmp_path / "cpu.max").write_text("max 100000\n")
+    assert aspects._cpu_quota(tmp_path) is None  # v2 wins, unlimited
+    (tmp_path / "cpu.max").write_text("10000 100000\n")
+    assert aspects._cpu_quota(tmp_path) == 0.1  # Render free tier
+
+
+def test_encoder_threads_follow_the_quota(monkeypatch):
+    monkeypatch.setattr(aspects.settings, "encoder_threads", None)  # whatever .env says
+    monkeypatch.setattr(aspects, "_usable_cpus", lambda: 64)
+    monkeypatch.setattr(aspects, "_cpu_quota", lambda: 0.1)
+    assert aspects._encoder_threads() == 1
+    monkeypatch.setattr(aspects, "_cpu_quota", lambda: 64.0)
+    assert aspects._encoder_threads() == 8  # ENCODER_MAX_THREADS
+    monkeypatch.setattr(aspects, "_cpu_quota", lambda: None)
+    monkeypatch.setattr(aspects, "_usable_cpus", lambda: 2)  # --cpuset-cpus, no quota
+    assert aspects._encoder_threads() == 2
+    monkeypatch.setattr(aspects, "_cpu_quota", lambda: 4.0)
+    assert aspects._encoder_threads() == 2  # the lower of affinity and quota
+    monkeypatch.setattr(aspects.settings, "encoder_threads", 3)
+    assert aspects._encoder_threads() == 3
+
+
+def test_encoder_threads_zero_is_rejected():
+    with pytest.raises(ValidationError, match="encoder_threads"):
+        Settings(encoder_threads=0)
 
 
 def test_anchor_config_shape():
@@ -232,9 +301,9 @@ def test_assign_never_crashes(model, text):
 def test_long_unspaced_text_is_cut_to_encoder_limit(model):
     text = "このゲームは最高です。" * 40  # one "word", ~440 wordpieces
     units = aspects._fit_to_encoder(aspects.split_sentences(text))
-    limit = aspects._model.max_seq_length - 2
+    limit = MAX_SEQ_LENGTH - 2
     assert len(units) > 1
-    assert all(len(aspects._model.tokenizer.tokenize(u)) <= limit for u in units)
+    assert all(len(aspects._tokenizer.encode(u, add_special_tokens=False)) <= limit for u in units)
     assert "".join(units) == text
     assert len(aspects.assign_aspects(text)) == len(units)
 

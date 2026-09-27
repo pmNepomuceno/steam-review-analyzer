@@ -12,9 +12,11 @@ node_modules/
 .env
 .env.local
 
-# Trained models — regenerate via scripts/train_sentiment.py
+# Trained models. sentiment.joblib is committed so the deployed model is the evaluated one
+# (docs/eval/sentiment_report.txt); retrain with scripts/train_sentiment.py.
 backend/models_store/*
 !backend/models_store/.gitkeep
+!backend/models_store/sentiment.joblib
 
 # OS
 .DS_Store
@@ -25,3 +27,8 @@ frontend/next-env.d.ts
 
 # Claude Code worktrees
 .claude/worktrees/
+.neon
+
+# Local agent tooling
+backend/.claude/
+backend/skills-lock.json

@@ -61,6 +61,28 @@ async def test_fetch_app_name_unknown_app(steam):
             await ingestion.fetch_app_name(http, 7)
 
 
+async def test_fetch_app_name_entry_keyed_by_other_id(steam):
+    # Real response shape seen 2026-09-27 for Hades: keyed by 1206340, not the requested appid.
+    steam.get(ingestion.constants.APPDETAILS_URL).mock(
+        return_value=httpx.Response(
+            200, json={"1206340": {"success": True, "data": {"name": "Hades", "steam_appid": 1145360}}}
+        )
+    )
+    async with httpx.AsyncClient() as http:
+        assert await ingestion.fetch_app_name(http, 1145360) == "Hades"
+
+
+async def test_fetch_app_name_rejects_entry_for_another_app(steam):
+    steam.get(ingestion.constants.APPDETAILS_URL).mock(
+        return_value=httpx.Response(
+            200, json={"999": {"success": True, "data": {"name": "Parent Game", "steam_appid": 999}}}
+        )
+    )
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(GameNotFound):
+            await ingestion.fetch_app_name(http, 7)
+
+
 async def test_retries_then_gives_up_on_429(steam):
     route = steam.get(ingestion.constants.APPDETAILS_URL).mock(return_value=httpx.Response(429))
     async with httpx.AsyncClient() as http:

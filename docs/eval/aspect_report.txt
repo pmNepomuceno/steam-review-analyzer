@@ -1,4 +1,4 @@
-Aspect tagging report, generated 2026-09-24 14:18 UTC by backend/scripts/evaluate_aspects.py
+Aspect tagging report, generated 2026-09-27 11:17 UTC by backend/scripts/evaluate_aspects.py
 
 === Data ===
   140 labeled units from 5 games, 8 flagged ambiguous. Threshold 0.40.
@@ -87,7 +87,7 @@ Aspect tagging report, generated 2026-09-24 14:18 UTC by backend/scripts/evaluat
     43  gameplay -> none          0.211  long        Proper snapping no longer exists, especially when you want to continue an existing road/train lin...
     80  gameplay -> none          0.380  near_below  All in all, a game that truly feels free-flow in terms of the way you can go about things.
     94  gameplay -> none          0.243  long        Why bother starting a new run to roleplay a different path when your character can already be the...
-   100  gameplay -> none          0.374  near_below  They have already updated some of the "old" heists that had some lame/annoying mechanics
+   100  gameplay -> none          0.373  near_below  They have already updated some of the "old" heists that had some lame/annoying mechanics
    108  gameplay -> none          0.323  near_below  Completion Difficulty : 6/10
    113  gameplay -> none          0.200  other       • Can't pick crew guns
    114  gameplay -> none          0.337  near_below  this game is LEAGUES better than the original portal game (in my opinion), there were many new me...
