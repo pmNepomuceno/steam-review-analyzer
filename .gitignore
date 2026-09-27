@@ -18,3 +18,10 @@ backend/models_store/*
 
 # OS
 .DS_Store
+
+# Next.js generated
+frontend/next-env.d.ts
+*.tsbuildinfo
+
+# Claude Code worktrees
+.claude/worktrees/

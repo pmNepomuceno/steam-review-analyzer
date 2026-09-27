@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel
@@ -16,11 +17,21 @@ class AspectSentiment(SentimentCounts):
     aspect: str
 
 
+class TrendPoint(BaseModel):
+    """Reviews created on one UTC day, by predicted sentiment."""
+
+    date: date
+    positive: int
+    negative: int
+
+
 class AspectSummary(BaseModel):
     appid: int
+    name: str
     status: Literal["ready"]
     overall: SentimentCounts  # every processed review, including those with no aspect
     aspects: list[AspectSentiment]
+    trend: list[TrendPoint]  # oldest day first, every day between oldest and newest review
 
 
 class ProcessingStatus(BaseModel):

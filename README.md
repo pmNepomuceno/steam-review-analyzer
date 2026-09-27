@@ -1,8 +1,8 @@
 # Steam Review Sentiment + Aspect Analyzer
 
-Pulls Steam reviews for any game and (in later milestones) breaks sentiment down by aspect. See `docs/PROJECT_BRIEF.md` for scope and milestones.
+Pulls Steam reviews for any game and breaks sentiment down by aspect. See `docs/PROJECT_BRIEF.md` for scope and milestones.
 
-**Status:** backend Milestones 1-5 done. `GET /games/{appid}/reviews` fetches and caches a game's English reviews in Postgres on first request; `GET /games/{appid}/aspects` reports sentiment per aspect once the reviews have been analyzed.
+**Status:** Milestones 1-6 done. `GET /games/{appid}/reviews` fetches and caches a game's English reviews in Postgres on first request; `GET /games/{appid}/aspects` reports sentiment per aspect and per day once the reviews have been analyzed. The Next.js dashboard in `frontend/` shows both for any appid. Results cover each game's ~1000 most recent English reviews, not its whole history.
 
 ## Setup
 
@@ -18,6 +18,16 @@ uv pip install -r requirements/dev.txt
 alembic upgrade head
 uvicorn src.main:app --reload
 ```
+
+Dashboard, in a second terminal (Node 22+):
+
+```bash
+cd frontend
+npm install
+npm run dev                        # http://localhost:3000, proxies /api/* to the API on :8000
+```
+
+Set `API_URL` to point the dashboard at an API elsewhere.
 
 ### First-time order: ingest, train, serve
 
@@ -53,6 +63,9 @@ curl "localhost:8000/games/1145360/reviews?limit=3"   # Hades: first call ingest
 cd backend && source .venv/bin/activate
 pytest -q        # needs the db container running; Steam is mocked
 ruff check .
+
+cd ../frontend
+npm test && npm run lint && npm run typecheck
 ```
 
 Settings live in `.env` (`DATABASE_URL`, `MIN_REVIEW_COUNT`, `MAX_REVIEWS`, `STEAM_REQUEST_DELAY_S`).

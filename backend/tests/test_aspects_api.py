@@ -224,6 +224,51 @@ async def test_reviews_filter_by_aspect_and_sentiment(client, engine, seeded, ml
     assert empty.json()["total"] == 0 and empty.json()["items"] == []
 
 
+async def test_reviews_carry_their_sentiment_and_aspects(client, engine, seeded, ml_calls):
+    url = f"/games/{APPID}/reviews"
+    before = (await client.get(url)).json()["items"]
+    assert {(r["predicted_sentiment"], tuple(r["aspects"])) for r in before} == {(None, ())}
+
+    await process(engine)
+
+    items = {r["id"]: r for r in (await client.get(url)).json()["items"]}
+    # Review 1 has two bugs units and a price unit: deduplicated, in ASPECTS order.
+    assert (items[1]["predicted_sentiment"], items[1]["aspects"]) == ("negative", ["price", "bugs"])
+    assert (items[3]["predicted_sentiment"], items[3]["aspects"]) == ("positive", [])  # all "none"
+    assert items[4]["aspects"] == ["performance"]
+
+    filtered = (await client.get(url, params={"aspect": "bugs", "sentiment": "negative"})).json()
+    assert filtered["items"] == [items[1]]
+
+    # A label dropped from ANCHORS since processing is left out, not a 500.
+    async with engine.begin() as conn:
+        await conn.execute(
+            update(ReviewAspect).where(ReviewAspect.aspect_label == "price").values(aspect_label="cost")
+        )
+    resp = await client.get(url)
+    assert resp.status_code == 200
+    assert {r["id"]: r["aspects"] for r in resp.json()["items"]}[1] == ["bugs"]
+
+
+async def test_aspects_trend_has_every_day(client, engine, seeded, ml_calls):
+    await add_review(engine, 5, "Love it.")  # 2026-08-01, a month before the seeded ones
+    await process(engine)
+
+    body = (await client.get(f"/games/{APPID}/aspects")).json()
+    assert body["name"] == "Hades"
+    trend = body["trend"]
+    assert trend[0] == {"date": "2026-08-01", "positive": 1, "negative": 0}
+    assert trend[-4:] == [
+        {"date": "2026-09-02", "positive": 0, "negative": 1},
+        {"date": "2026-09-03", "positive": 1, "negative": 0},
+        {"date": "2026-09-04", "positive": 1, "negative": 0},
+        {"date": "2026-09-05", "positive": 0, "negative": 1},
+    ]
+    assert len(trend) == 36  # Aug 1 .. Sep 5, gap days included as zeros
+    assert all(p["positive"] == p["negative"] == 0 for p in trend[1:-4])
+    assert sum(p["positive"] + p["negative"] for p in trend) == body["overall"]["total"]
+
+
 async def test_reviews_filter_on_unprocessed_game_returns_202(client, seeded, ml_calls):
     resp = await client.get(f"/games/{APPID}/reviews", params={"sentiment": "negative"})
     assert resp.status_code == 202

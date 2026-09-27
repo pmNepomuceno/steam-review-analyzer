@@ -1,0 +1,240 @@
+:root {
+  color-scheme: light;
+  --surface: #fcfcfb;
+  --surface-2: #f3f2ef;
+  --border: #e3e2de;
+  --text: #0b0b0b;
+  --text-2: #52514e;
+  --positive: #2a78d6;
+  --negative: #e34948;
+  --critical: #d03b3b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface: #1a1a19;
+    --surface-2: #242423;
+    --border: #383835;
+    --text: #ffffff;
+    --text-2: #c3c2b7;
+    --positive: #3987e5;
+    --negative: #e66767;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: #1a1a19;
+  --surface-2: #242423;
+  --border: #383835;
+  --text: #ffffff;
+  --text-2: #c3c2b7;
+  --positive: #3987e5;
+  --negative: #e66767;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+}
+
+a {
+  color: var(--positive);
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-size: 1.75rem;
+}
+
+h2 {
+  margin: 0 0 12px;
+  font-size: 1.125rem;
+}
+
+.muted {
+  color: var(--text-2);
+}
+
+.card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 20px;
+}
+
+.state {
+  text-align: center;
+  padding: 48px 16px;
+}
+
+.state.error {
+  border-color: var(--critical);
+}
+
+.spinner {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border);
+  border-top-color: var(--positive);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 3s;
+  }
+}
+
+form.appid,
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: end;
+}
+
+input,
+select,
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+label {
+  display: grid;
+  gap: 2px;
+  font-size: 0.875rem;
+  color: var(--text-2);
+}
+
+.chart {
+  width: 100%;
+  height: 300px;
+}
+
+details {
+  margin-top: 8px;
+  font-size: 0.875rem;
+}
+
+table {
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 2px 12px 2px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.reviews {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+  transition: opacity 0.15s;
+}
+
+.reviews.stale {
+  opacity: 0.5;
+}
+
+.reviews li {
+  border-top: 1px solid var(--border);
+  padding: 12px 0;
+}
+
+.review-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-size: 0.8125rem;
+  color: var(--text-2);
+}
+
+.review-text {
+  margin: 6px 0 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.tag {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 8px;
+  color: var(--text);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.badge::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--dot);
+}
+
+.badge.positive {
+  --dot: var(--positive);
+}
+
+.badge.negative {
+  --dot: var(--negative);
+}
+
+.pager {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
