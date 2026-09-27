@@ -34,7 +34,7 @@ Tests create and use a separate `steam_reviews_test` database on the same server
 
 ## Library docs
 
-Always use the Context7 MCP server to look up library and framework documentation (FastAPI, SQLAlchemy, Alembic, Pydantic, scikit-learn, sentence-transformers, Next.js, React, Recharts, Vitest and the like) before writing or changing code that uses them, instead of relying on memory. Resolve the library ID first, then fetch the docs for the specific API or topic in question.
+When unfamiliar with a library's current API (for example SQLAlchemy 2 async sessions, pydantic-settings, sentence-transformers 3, the Next.js app router or Recharts), consult the Context7 MCP server before writing code that uses it, instead of relying on memory. Resolve the library ID first, then fetch the docs for the specific API or topic in question.
 
 ## What the project is
 
