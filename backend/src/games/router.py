@@ -24,9 +24,13 @@ async def get_aspects(
     session: Annotated[AsyncSession, Depends(get_session, scope="function")],
     http: Annotated[httpx.AsyncClient, Depends(get_http_client)],
 ) -> AspectSummary | JSONResponse:
-    await reviews_service.ensure_ingested(session, http, appid)
     game = await service.get_game(session, appid)
+    if (blocked := await reviews_service.on_demand_blocked(session, appid, game)) is not None:
+        return blocked
+    if not service.is_ingested(game):
+        await reviews_service.ensure_ingested(session, http, appid)
+        game = await service.get_game(session, appid)
     if game.aspects_status != AspectStatus.DONE:
-        return reviews_service.unprocessed_response(session.bind, game)
+        return await reviews_service.unprocessed_response(session, game)
     summary = await reviews_service.aspect_summary(session, appid)
     return AspectSummary(name=game.name, **summary)

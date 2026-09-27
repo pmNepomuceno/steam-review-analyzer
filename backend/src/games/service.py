@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.games.constants import AspectStatus
 from src.games.models import Game
 
 
@@ -12,6 +13,16 @@ async def get_game(session: AsyncSession, appid: int) -> Game | None:
     # see the row another request committed, not a stale identity-map copy.
     stmt = select(Game).where(Game.appid == appid).execution_options(populate_existing=True)
     return await session.scalar(stmt)
+
+
+async def list_processed(session: AsyncSession) -> list[tuple[int, str]]:
+    """(appid, name) of every game whose analysis is done, by name."""
+    result = await session.execute(
+        select(Game.appid, Game.name)
+        .where(Game.aspects_status == AspectStatus.DONE)
+        .order_by(Game.name)
+    )
+    return [(appid, name) for appid, name in result]
 
 
 def is_ingested(game: Game | None) -> bool:

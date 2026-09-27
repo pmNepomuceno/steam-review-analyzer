@@ -1,0 +1,9 @@
+.venv
+**/__pycache__
+.pytest_cache
+.ruff_cache
+tests
+# Local-only files that COPY . . would otherwise bake into the image
+.env*
+.claude
+skills-lock.json

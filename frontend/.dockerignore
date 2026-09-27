@@ -1,0 +1,6 @@
+node_modules
+.next
+*.tsbuildinfo
+next-env.d.ts
+# Local env files would be read by next build and baked into the image
+.env*

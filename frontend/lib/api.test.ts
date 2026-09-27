@@ -44,9 +44,21 @@ describe("fetchState", () => {
     });
   });
 
+  it("maps 403 unavailable to the list of pre-processed games", async () => {
+    const available = [{ appid: 620, name: "Portal 2" }];
+    stubFetch(json(403, { status: "unavailable", detail: "demo only", available }), json(403, {}));
+    expect(await fetchState("/x")).toEqual({ kind: "unavailable", message: "demo only", games: available });
+    expect((await fetchState("/x")).kind).toBe("error"); // any other 403
+  });
+
   it("tells a failed analysis apart from other 500s", async () => {
-    stubFetch(json(500, { status: "failed", detail: "run --force" }), json(500, "oops"));
-    expect(await fetchState("/x")).toEqual({ kind: "failed", message: "run --force" });
+    stubFetch(
+      json(500, { status: "failed", detail: "run --force", interrupted: true }),
+      json(500, { status: "failed", detail: "generic" }),
+      json(500, "oops"),
+    );
+    expect(await fetchState("/x")).toEqual({ kind: "failed", message: "run --force", interrupted: true });
+    expect(await fetchState("/x")).toEqual({ kind: "failed", message: "generic", interrupted: false });
     expect(await fetchState("/x")).toMatchObject({ kind: "error", status: 500 });
   });
 

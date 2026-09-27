@@ -82,6 +82,11 @@ h2 {
   padding: 48px 16px;
 }
 
+.state ul {
+  list-style: none;
+  padding: 0;
+}
+
 .state.error {
   border-color: var(--critical);
 }

@@ -43,7 +43,7 @@ view Steam's own UI never shows.
 | Database | PostgreSQL (Neon/Supabase free tier) | Review cache + labeled data |
 | Auth | None (v1) | Out of scope |
 | Hosting | Render/Fly (backend) + Vercel (frontend) | $0 at this traffic level |
-| Other | scikit-learn (sentiment), sentence-transformers (aspect embeddings), Docker | Real trained/embedding-based ML, not LLM calls |
+| Other | scikit-learn (sentiment), sentence-transformers model run on ONNX Runtime (aspect embeddings), Docker | Real trained/embedding-based ML, not LLM calls |
 
 ## 5. Data model (rough)
 - `games`: appid, name, last_ingested_at, aspects_status, aspects_error, aspects_processed_at
