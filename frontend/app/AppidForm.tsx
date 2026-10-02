@@ -150,7 +150,7 @@ export default function AppidForm({ analyzed }: { analyzed?: Set<number> }) {
                       (analyzed.has(r.appid) ? (
                         <span className="tag">Analyzed</span>
                       ) : (
-                        <span className="tag dim">Not analyzed</span>
+                        <span className="tag dim">Not analyzed yet</span>
                       ))}
                   </span>
                 </span>
@@ -158,8 +158,10 @@ export default function AppidForm({ analyzed }: { analyzed?: Set<number> }) {
             ))}
           </ul>
         </div>
+        {/* "Open", not "Analyze": a deployment without on-demand processing only opens games
+            analyzed ahead of time, and says so for any other. */}
         <button type="submit" className="primary">
-          Analyze
+          Open
         </button>
       </form>
       <p className="search-status" aria-live="polite">

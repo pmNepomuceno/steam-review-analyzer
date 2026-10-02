@@ -448,7 +448,7 @@ async def _summary_counts(session: AsyncSession, appid: int) -> dict[str, Any]:
     with three bugs sentences counts once under bugs. `overall` counts every review, also
     those whose units are all "none" or that have no units at all. `trend` has one point
     per UTC day from the oldest to the newest review, days without reviews included as 0.
-    `steam_sample` counts Steam's own thumbs (voted_up) on the same reviews.
+    `steam_sample` counts Steam's own thumbs (voted_up) on the same reviews as `overall`.
     """
     # ponytail: two queries; one GROUP BY GROUPING SETS would do (known limitation, see
     # DECISIONS.md).
@@ -476,7 +476,8 @@ async def _summary_counts(session: AsyncSession, appid: int) -> dict[str, Any]:
         day_counts = by_day.setdefault(d, {})
         day_counts[sent] = day_counts.get(sent, 0) + n
         overall_counts[sent] = overall_counts.get(sent, 0) + n
-        voted_up[up] += n
+        if sent is not None:  # only the reviews `overall` counts
+            voted_up[up] += n
     trend = []
     if by_day:
         d, last = min(by_day), max(by_day)
@@ -488,15 +489,7 @@ async def _summary_counts(session: AsyncSession, appid: int) -> dict[str, Any]:
             })
             d += timedelta(days=1)
 
-    def entry(positive: int, negative: int) -> dict[str, Any]:
-        total = positive + negative
-        return {
-            "positive": positive,
-            "negative": negative,
-            "total": total,
-            "positive_pct": round(100 * positive / total, 1) if total else None,
-        }
-
+    entry = games_service.sentiment_counts
     return {
         "overall": entry(overall_counts.get(POSITIVE, 0), overall_counts.get(NEGATIVE, 0)),
         "aspects": [  # "none" is not one of ASPECTS

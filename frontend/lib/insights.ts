@@ -2,7 +2,7 @@
 // sentences above the charts. Templates on purpose, no LLM: every sentence is traceable to
 // the numbers shown below it.
 
-import type { AspectStats, AspectSummary } from "./api";
+import type { AspectCounts, AspectSummary } from "./api";
 
 type AspectCopy = { label: string; phrase: string; description: string };
 
@@ -52,13 +52,13 @@ export const storePct = ({ positive, total }: { positive: number; total: number 
   Math.floor((100 * positive) / total);
 
 /** Aspects with enough mentions to judge, weakest first. */
-export function judged(aspects: AspectStats[]): AspectStats[] {
+export function judged<T extends AspectCounts>(aspects: T[]): T[] {
   return aspects
     .filter((a) => a.total >= MIN_MENTIONS && a.positive_pct !== null)
     .sort((a, b) => (a.positive_pct ?? 0) - (b.positive_pct ?? 0));
 }
 
-export function verdict(summary: Pick<AspectSummary, "aspects">): string {
+export function verdict(summary: { aspects: AspectCounts[] }): string {
   const ranked = judged(summary.aspects);
   if (ranked.length === 0) {
     return "Too few reviews mention specific topics to point out strengths or weaknesses.";
@@ -84,6 +84,19 @@ export function verdict(summary: Pick<AspectSummary, "aspects">): string {
   return `Players are most positive about ${copyFor(best.aspect).phrase} (${bestPct}%), but ${weakness}.`;
 }
 
+/**
+ * The verdict minus its weakest topic, for when the comparison above it already names that:
+ * the strongest topic, or the flat-spread sentence. Null when there is nothing to add.
+ */
+export function strength(summary: { aspects: AspectCounts[] }): string | null {
+  const ranked = judged(summary.aspects);
+  if (ranked.length < 2) return null;
+  const best = ranked[ranked.length - 1];
+  const bestPct = pct(best.positive_pct)!;
+  if (bestPct - pct(ranked[0].positive_pct)! < FLAT_SPREAD) return verdict(summary);
+  return `Players are most positive about ${copyFor(best.aspect).phrase} (${bestPct}%).`;
+}
+
 export type Comparison = {
   steamPct: number;
   aspect: string;
@@ -94,7 +107,7 @@ export type Comparison = {
 
 /** Steam's thumbs-up share of the same reviews against the weakest judged aspect. */
 export function comparison(
-  summary: Pick<AspectSummary, "aspects" | "steam_sample">,
+  summary: { aspects: AspectCounts[] } & Pick<AspectSummary, "steam_sample">,
 ): Comparison | null {
   const steamPct = pct(summary.steam_sample.positive_pct);
   const [worst] = judged(summary.aspects);
@@ -106,4 +119,42 @@ export function comparison(
       ? `Steam says ${steamPct}% positive, but satisfaction on ${phrase} is only ${aspectPct}%.`
       : `Steam says ${steamPct}% positive, and even ${phrase}, the lowest-rated topic, holds ${aspectPct}%.`;
   return { steamPct, aspect: worst.aspect, aspectPct, weaker, text };
+}
+
+// UTC: trend dates are UTC days, and review timestamps are grouped into them in UTC.
+const DATE = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+/** "2026-09-23" or a full ISO timestamp -> "Sep 23, 2026", as its UTC day. */
+export const formatDate = (iso: string) => DATE.format(new Date(iso));
+
+/** Quotes are clauses cut from a longer review; one starting mid-sentence gets an ellipsis. */
+export const quoteText = (text: string) => (/^[a-z]/.test(text) ? `…${text}` : text);
+
+const SPIKE_MIN = 20; // negative reviews in a day before a day can stand out at all
+const SPIKE_RATIO = 5; // times the median day's negative reviews
+
+export type Spike = { date: string; negative: number; typical: number; text: string };
+
+/**
+ * The day with the most negative reviews, when it dwarfs a typical day: something happened
+ * then (a patch, a sale, a controversy), which the chart alone leaves unsaid. The cause is
+ * not known here, so the sentence states only the numbers.
+ */
+export function spike(trend: AspectSummary["trend"]): Spike | null {
+  if (trend.length === 0) return null;
+  const sorted = trend.map((d) => d.negative).sort((a, b) => a - b);
+  const typical = sorted[Math.floor(sorted.length / 2)];
+  const peak = trend.reduce((max, d) => (d.negative > max.negative ? d : max));
+  if (peak.negative < SPIKE_MIN || peak.negative < SPIKE_RATIO * Math.max(typical, 1)) return null;
+  return {
+    date: peak.date,
+    negative: peak.negative,
+    typical,
+    text: `${formatDate(peak.date)} stands out: ${peak.negative} negative reviews in one day, against ${typical} on a typical day.`,
+  };
 }

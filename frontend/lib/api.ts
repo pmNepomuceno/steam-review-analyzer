@@ -11,7 +11,9 @@ export type SentimentCounts = {
 
 export type Quote = { text: string; sentiment: Sentiment };
 
-export type AspectStats = SentimentCounts & { aspect: string; quotes: Quote[] };
+export type AspectCounts = SentimentCounts & { aspect: string };
+
+export type AspectStats = AspectCounts & { quotes: Quote[] };
 
 // Steam's own store rating, as its store page shows it: English reviews, all time.
 export type SteamRating = {
@@ -54,8 +56,13 @@ export type ReviewPage = {
 
 export type AvailableGame = { appid: number; name: string };
 
-// GET /games: every game whose results are ready.
-export type GameListItem = AvailableGame & { review_count: number; analyzed_at: string | null };
+// GET /games: every game whose results are ready, with the counts its card's comparison uses.
+export type GameListItem = AvailableGame & {
+  review_count: number;
+  analyzed_at: string | null;
+  aspects?: AspectCounts[]; // absent from an API deployed before the card counts
+  steam_sample?: SentimentCounts;
+};
 
 // GET /steam/search
 export type SearchResult = { appid: number; name: string; image: string | null };

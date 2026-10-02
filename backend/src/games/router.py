@@ -12,7 +12,7 @@ from src.games.dependencies import valid_appid
 from src.games.schemas import (
     UNPROCESSED_RESPONSES,
     AspectSummary,
-    GameListItem,
+    GameCard,
     SearchResult,
     SteamRating,
 )
@@ -23,10 +23,10 @@ router = APIRouter(prefix="/games", tags=["games"])
 steam_router = APIRouter(prefix="/steam", tags=["steam"])
 
 
-@router.get("", response_model=list[GameListItem])
-async def list_games(session: Annotated[AsyncSession, Depends(get_session)]) -> list[GameListItem]:
-    """Every game whose results are ready, by name: what the homepage lists."""
-    return await service.list_processed(session)
+@router.get("", response_model=list[GameCard])
+async def list_games(session: Annotated[AsyncSession, Depends(get_session)]) -> list[GameCard]:
+    """Every game whose results are ready, by name, with the counts its homepage card states."""
+    return await service.list_cards(session)
 
 
 @router.get("/{appid}/aspects", response_model=AspectSummary, responses=UNPROCESSED_RESPONSES)

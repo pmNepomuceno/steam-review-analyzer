@@ -20,8 +20,11 @@ class Quote(BaseModel):
     sentiment: Literal["positive", "negative"]
 
 
-class AspectSentiment(SentimentCounts):
+class AspectCounts(SentimentCounts):
     aspect: str
+
+
+class AspectSentiment(AspectCounts):
     # Up to 3 example sentences: mostly negative for a weak aspect (under 50% positive, or
     # well below the game's overall share), mostly positive otherwise; may be empty.
     quotes: list[Quote]
@@ -80,6 +83,13 @@ class AvailableGame(BaseModel):
 class GameListItem(AvailableGame):
     review_count: int
     analyzed_at: datetime | None  # games.aspects_processed_at
+
+
+class GameCard(GameListItem):
+    """A homepage card: enough of /aspects to state the game's headline comparison."""
+
+    aspects: list[AspectCounts]
+    steam_sample: SentimentCounts
 
 
 class SearchResult(BaseModel):

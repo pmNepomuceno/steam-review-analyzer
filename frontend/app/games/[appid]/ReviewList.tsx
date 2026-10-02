@@ -1,12 +1,15 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { fetchState, pageInfo, type Loaded, type ReviewPage } from "../../../lib/api";
-import { copyFor } from "../../../lib/insights";
+import { copyFor, formatDate } from "../../../lib/insights";
 
 const PAGE_SIZE = 20;
+
+const playtime = (minutes: number) =>
+  minutes < 60 ? "under 1 h played" : `${Math.round(minutes / 60).toLocaleString("en-US")} h played`;
 
 export default function ReviewList({ appid, aspects }: { appid: number; aspects: string[] }) {
   // Filters and page live in the URL (?aspect=bugs&sentiment=negative&offset=20), so a
@@ -18,14 +21,17 @@ export default function ReviewList({ appid, aspects }: { appid: number; aspects:
   const rawSentiment = search.get("sentiment") ?? "";
   const sentiment = ["positive", "negative"].includes(rawSentiment) ? rawSentiment : "";
   const rawOffset = Number(search.get("offset"));
-  const offset = Number.isSafeInteger(rawOffset) && rawOffset > 0 ? rawOffset : 0;
+  // Snapped to a page boundary, so "Page N of M" matches the reviews shown.
+  const offset =
+    Number.isSafeInteger(rawOffset) && rawOffset > 0 ? rawOffset - (rawOffset % PAGE_SIZE) : 0;
   const navigate = (changes: Record<string, string | number>) => {
     const next = new URLSearchParams(search);
     for (const [key, value] of Object.entries(changes)) {
       if (value) next.set(key, String(value));
       else next.delete(key);
     }
-    window.history.replaceState(null, "", next.size ? `?${next}` : window.location.pathname);
+    // pushState, not replaceState: Back steps through filter and page changes.
+    window.history.pushState(null, "", `${window.location.pathname}${next.size ? `?${next}` : ""}#reviews`);
   };
   // The answer remembers which query it belongs to; a mismatch means a newer one is loading.
   const [answer, setAnswer] = useState<{ query: string; result: Loaded<ReviewPage> } | null>(null);
@@ -76,6 +82,11 @@ export default function ReviewList({ appid, aspects }: { appid: number; aspects:
             <option value="negative">Negative</option>
           </select>
         </label>
+        {(aspect || sentiment) && (
+          <button type="button" onClick={() => navigate({ aspect: "", sentiment: "", offset: 0 })}>
+            Clear filters
+          </button>
+        )}
       </div>
 
       {result && result.kind !== "ready" && (
@@ -113,11 +124,11 @@ export default function ReviewList({ appid, aspects }: { appid: number; aspects:
                     </span>
                   ))}
                   <span>
-                    · {r.created_at.slice(0, 10)} · {Math.round(r.playtime_forever / 60)} h played
+                    · {formatDate(r.created_at)} · {playtime(r.playtime_forever)}
                     · {r.voted_up ? "Recommended" : "Not recommended"} on Steam
                   </span>
                 </div>
-                <p className="review-text">{r.review_text}</p>
+                <ReviewText id={r.id} text={r.review_text} />
               </li>
             ))}
           </ul>
@@ -129,6 +140,11 @@ export default function ReviewList({ appid, aspects }: { appid: number; aspects:
               >
                 ← Newer
               </button>
+              {info.to > 0 && (
+                <span className="muted">
+                  Page {page.offset / PAGE_SIZE + 1} of {Math.ceil(page.total / PAGE_SIZE)}
+                </span>
+              )}
               <button
                 disabled={!info.hasNext || loading}
                 onClick={() => navigate({ offset: page.offset + PAGE_SIZE })}
@@ -138,6 +154,43 @@ export default function ReviewList({ appid, aspects }: { appid: number; aspects:
             </div>
           )}
         </>
+      )}
+    </>
+  );
+}
+
+/** A review clamped to 6 lines by CSS, with a toggle only when the clamp hides something. */
+function ReviewText({ id, text }: { id: number; text: string }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  const [open, setOpen] = useState(false);
+  const [clamped, setClamped] = useState(false);
+
+  // Measured, not guessed from length: how many lines a review wraps to depends on the width.
+  // Re-measured on resize; while open there is no clamp to measure, so the last answer stands.
+  useEffect(() => {
+    const el = ref.current!;
+    const observer = new ResizeObserver(() => {
+      if (!el.classList.contains("full")) setClamped(el.scrollHeight > el.clientHeight);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <>
+      <p ref={ref} id={`review-${id}`} className={`review-text${open ? " full" : ""}`}>
+        {text}
+      </p>
+      {(clamped || open) && (
+        <button
+          type="button"
+          className="link"
+          aria-expanded={open}
+          aria-controls={`review-${id}`}
+          onClick={() => setOpen(!open)}
+        >
+          {open ? "Show less" : "Show full review"}
+        </button>
       )}
     </>
   );

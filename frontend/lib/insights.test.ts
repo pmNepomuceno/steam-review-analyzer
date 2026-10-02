@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AspectStats } from "./api";
-import { comparison, storePct, verdict } from "./insights";
+import { comparison, quoteText, spike, storePct, strength, verdict } from "./insights";
 
 const aspect = (name: string, positive_pct: number | null, total = 100): AspectStats => ({
   aspect: name,
@@ -92,5 +92,42 @@ describe("storePct", () => {
     expect(storePct({ positive: 20019, total: 34580 })).toBe(57); // Cities: Skylines II, 57.89%
     expect(storePct({ positive: 14370, total: 31932 })).toBe(45); // PAYDAY 3, 45.00%
     expect(storePct({ positive: 29, total: 100 })).toBe(29); // no float underflow below 29
+  });
+});
+
+describe("spike", () => {
+  const day = (date: string, negative: number) => ({ date, positive: 10, negative });
+  const quiet = Array.from({ length: 9 }, (_, i) => day(`2026-09-0${i + 1}`, 6));
+
+  it("calls out a day that dwarfs the typical one", () => {
+    // Cities: Skylines II: 85 negative reviews on 2026-09-23 against a median of 6.
+    expect(spike([...quiet, day("2026-09-23", 85)])?.text).toBe(
+      "Sep 23, 2026 stands out: 85 negative reviews in one day, against 6 on a typical day.",
+    );
+  });
+
+  it("stays quiet for ordinary variation and for small absolute numbers", () => {
+    expect(spike([...quiet, day("2026-09-22", 19)])).toBeNull(); // PAYDAY 3's busiest day
+    expect(spike([day("2026-09-01", 0), day("2026-09-02", 12)])).toBeNull();
+    expect(spike([])).toBeNull();
+  });
+});
+
+describe("quoteText", () => {
+  it("marks a clause cut from mid-sentence", () => {
+    expect(quoteText("and 60 FPS in heavy cities")).toBe("…and 60 FPS in heavy cities");
+    expect(quoteText("Runs great.")).toBe("Runs great.");
+  });
+});
+
+describe("strength", () => {
+  it("names only the best topic, since the comparison names the worst", () => {
+    expect(strength({ aspects: CITIES })).toBe("Players are most positive about gameplay (69%).");
+  });
+
+  it("keeps the flat sentence and has nothing to add for a single topic", () => {
+    const hades = [aspect("price", 95.2), aspect("gameplay", 94.0)];
+    expect(strength({ aspects: hades })).toBe(verdict({ aspects: hades }));
+    expect(strength({ aspects: [aspect("gameplay", 80)] })).toBeNull();
   });
 });

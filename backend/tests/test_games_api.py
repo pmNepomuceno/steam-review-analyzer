@@ -11,7 +11,7 @@ from src.games import service
 from src.games.constants import AspectStatus
 from src.games.models import Game
 from src.reviews import constants
-from src.reviews.models import Review
+from src.reviews.models import Review, ReviewAspect
 
 DONE_AT = datetime(2026, 10, 1, 12, tzinfo=UTC)
 SEARCH = {
@@ -40,18 +40,31 @@ async def test_lists_only_done_games_with_counts(client, engine):
         ])
         await session.flush()
         session.add_all(
-            Review(id=i, appid=1, review_text="x", voted_up=True, votes_up=0, playtime_forever=0,
-                   language="english", created_at=DONE_AT)
+            Review(id=i, appid=1, review_text="x", voted_up=i < 2, votes_up=0, playtime_forever=0,
+                   language="english", created_at=DONE_AT,
+                   predicted_sentiment="positive" if i < 2 else "negative")
             for i in range(3)
         )
+        # Not analyzed (no predicted sentiment): left out of steam_sample, like /aspects' overall.
+        session.add(Review(id=3, appid=1, review_text="x", voted_up=False, votes_up=0,
+                           playtime_forever=0, language="english", created_at=DONE_AT))
+        await session.flush()
+        session.add(ReviewAspect(review_id=2, sentence_text="it crashes", aspect_label="bugs",
+                                 similarity_score=0.5))
         await session.commit()
 
     resp = await client.get("/games")
     assert resp.status_code == 200
-    assert resp.json() == [
-        {"appid": 1, "name": "Alpha", "review_count": 3, "analyzed_at": "2026-10-01T12:00:00Z"},
-        {"appid": 2, "name": "Beta", "review_count": 0, "analyzed_at": "2026-10-01T12:00:00Z"},
-    ]
+    alpha, beta = resp.json()
+    assert {k: alpha[k] for k in ("appid", "name", "review_count", "analyzed_at")} == {
+        "appid": 1, "name": "Alpha", "review_count": 4, "analyzed_at": "2026-10-01T12:00:00Z",
+    }
+    assert (beta["name"], beta["review_count"]) == ("Beta", 0)
+    # The card's comparison inputs: Steam's thumbs on the sample and the per-aspect counts.
+    assert alpha["steam_sample"] == {"positive": 2, "negative": 1, "total": 3, "positive_pct": 66.7}
+    bugs = next(a for a in alpha["aspects"] if a["aspect"] == "bugs")
+    assert bugs == {"aspect": "bugs", "positive": 0, "negative": 1, "total": 1, "positive_pct": 0.0}
+    assert beta["steam_sample"]["total"] == 0
 
 
 async def test_search_maps_apps_and_caches_per_term(client, steam):

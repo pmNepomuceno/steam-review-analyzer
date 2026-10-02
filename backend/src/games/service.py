@@ -10,9 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.games import constants
 from src.games.constants import AspectStatus
 from src.games.models import Game
-from src.games.schemas import GameListItem
+from src.games.schemas import GameCard, GameListItem
+from src.ml.anchors import ASPECTS
+from src.ml.constants import NEGATIVE, POSITIVE
 from src.reviews import ingestion
-from src.reviews.models import Review
+from src.reviews.models import Review, ReviewAspect
 
 # /steam/search answers per search term. The calls behind them are paced with every other
 # Steam call (`ingestion._get_json`).
@@ -40,6 +42,64 @@ async def list_processed(session: AsyncSession) -> list[GameListItem]:
         GameListItem(appid=appid, name=name, review_count=count, analyzed_at=analyzed_at)
         for appid, name, count, analyzed_at in result
     ]
+
+
+async def list_cards(session: AsyncSession) -> list[GameCard]:
+    """Every done game (`list_processed`) with its per-aspect counts and `steam_sample`.
+
+    The same counts /aspects gives (`reviews.service._summary_counts`), for every game in
+    two grouped queries.
+    """
+    games = await list_processed(session)
+    appids = [g.appid for g in games]
+    rows = await session.execute(
+        select(
+            Review.appid,
+            ReviewAspect.aspect_label,
+            Review.predicted_sentiment,
+            func.count(ReviewAspect.review_id.distinct()),
+        )
+        .join(Review, Review.id == ReviewAspect.review_id)
+        .where(Review.appid.in_(appids))
+        .group_by(Review.appid, ReviewAspect.aspect_label, Review.predicted_sentiment)
+    )
+    aspects = {(appid, label, sent): n for appid, label, sent, n in rows}
+    rows = await session.execute(
+        select(Review.appid, Review.voted_up, func.count())
+        .where(Review.appid.in_(appids), Review.predicted_sentiment.is_not(None))
+        .group_by(Review.appid, Review.voted_up)
+    )
+    votes = {(appid, up): n for appid, up, n in rows}
+    return [
+        GameCard(
+            **g.model_dump(),
+            aspects=[
+                {
+                    "aspect": a,
+                    **sentiment_counts(
+                        aspects.get((g.appid, a, POSITIVE), 0),
+                        aspects.get((g.appid, a, NEGATIVE), 0),
+                    ),
+                }
+                for a in ASPECTS
+            ],
+            steam_sample=sentiment_counts(
+                votes.get((g.appid, True), 0), votes.get((g.appid, False), 0)
+            ),
+        )
+        for g in games
+    ]
+
+
+def sentiment_counts(positive: int, negative: int) -> dict[str, Any]:
+    """A `SentimentCounts` as a dict."""
+    total = positive + negative
+    return {
+        "positive": positive,
+        "negative": negative,
+        "total": total,
+        "positive_pct": round(100 * positive / total, 1) if total else None,
+    }
 
 
 def _cached_search(term: str) -> list[dict[str, Any]] | None:
