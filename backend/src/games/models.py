@@ -35,8 +35,8 @@ class Game(Base):
     aspect_quotes: Mapped[dict[str, list[dict[str, str]]] | None] = mapped_column(JSONB)
     # Steam's own store rating (English, Steam purchasers, all time), fetched by each run
     # (best effort; a failed fetch keeps the previous values). `steam_rating_checked_at` is
-    # when a run last asked: set with steam_total NULL means Steam had no rating to give;
-    # NULL means the game was processed before runs fetched it.
+    # when a run last asked: set with steam_total NULL means Steam had no rating to give or
+    # the fetch failed; NULL means the game was processed before runs fetched it.
     steam_score_desc: Mapped[str | None] = mapped_column(Text)  # e.g. "Very Positive"
     steam_positive: Mapped[int | None] = mapped_column(Integer)
     steam_total: Mapped[int | None] = mapped_column(Integer)
