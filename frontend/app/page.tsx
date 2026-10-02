@@ -1,15 +1,17 @@
-import AppidForm from "./AppidForm";
+import GameBrowser from "./GameBrowser";
 
 export default function Home() {
   return (
     <>
-      <h1>Steam Review Analyzer</h1>
-      <p className="muted">
-        Enter a game&apos;s appid (the number in its store URL,{" "}
-        <code>store.steampowered.com/app/&lt;appid&gt;</code>). A game seen for the first time is
-        fetched from Steam and analyzed, which takes up to a minute.
-      </p>
-      <AppidForm />
+      <div className="intro">
+        <h1>What Steam reviews say, topic by topic</h1>
+        <p>
+          Steam gives every game one thumbs-up percentage. This splits a game&apos;s most recent
+          reviews into sentences, sorts them into performance, price, bugs, story and gameplay,
+          and shows how players feel about each one, with their own words as examples.
+        </p>
+      </div>
+      <GameBrowser />
     </>
   );
 }

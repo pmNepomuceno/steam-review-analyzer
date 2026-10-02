@@ -12,18 +12,22 @@ import {
 } from "recharts";
 
 import type { AspectSummary } from "../../../lib/api";
+import { copyFor } from "../../../lib/insights";
 
 // Colors are CSS variables from globals.css, so light/dark mode needs nothing here.
-const AXIS = { stroke: "var(--border)", tick: { fill: "var(--text-2)", fontSize: 12 } };
+const AXIS = { stroke: "var(--border)", tick: { fill: "var(--text-2)", fontSize: 13 } };
 const TOOLTIP = {
   contentStyle: {
-    background: "var(--surface)",
-    border: "1px solid var(--border)",
-    borderRadius: 6,
+    background: "var(--surface-2)",
+    border: 0,
+    borderRadius: 3,
+    boxShadow: "0 4px 16px rgb(0 0 0 / 0.35)",
     color: "var(--text)",
   },
-  cursor: { fill: "var(--border)", fillOpacity: 0.4 },
+  labelStyle: { color: "var(--text-strong)", fontWeight: 500 },
+  cursor: { fill: "var(--field)", fillOpacity: 0.5 },
 };
+const label = (aspect: string) => copyFor(aspect).label;
 const LEGEND = {
   itemSorter: null, // keep series order (Positive first), not alphabetical
   formatter: (v: string) => <span style={{ color: "var(--text)" }}>{v}</span>,
@@ -32,14 +36,20 @@ const LEGEND = {
 const STATIC = { isAnimationActive: false };
 
 export function AspectChart({ aspects }: { aspects: AspectSummary["aspects"] }) {
+  const rows = aspects.map((a) => ({
+    topic: label(a.aspect),
+    positive: a.positive,
+    negative: a.negative,
+    total: a.total,
+  }));
   return (
     <>
       <div className="chart">
         <ResponsiveContainer>
-          <BarChart data={aspects} layout="vertical" barGap={2} margin={{ left: 8, right: 16 }}>
+          <BarChart data={rows} layout="vertical" barGap={2} margin={{ left: 4, right: 16 }}>
             <CartesianGrid horizontal={false} stroke="var(--border)" />
             <XAxis type="number" allowDecimals={false} {...AXIS} />
-            <YAxis type="category" dataKey="aspect" width={88} {...AXIS} />
+            <YAxis type="category" dataKey="topic" width={118} {...AXIS} />
             <Tooltip {...TOOLTIP} />
             <Legend {...LEGEND} />
             <Bar {...STATIC} dataKey="positive" name="Positive" fill="var(--positive)" radius={[0, 4, 4, 0]} />
@@ -47,14 +57,15 @@ export function AspectChart({ aspects }: { aspects: AspectSummary["aspects"] }) 
           </BarChart>
         </ResponsiveContainer>
       </div>
-      <p className="muted">
-        Distinct reviews with at least one sentence about the aspect, by the review&apos;s
-        predicted sentiment. Reviews about none of these count only in the total.
+      <p className="chart-note">
+        Reviews with at least one sentence about the topic, by the review&apos;s predicted
+        sentiment. A review counts once per topic however many sentences it has about it, and
+        reviews about none of these topics are left out.
       </p>
       <DataTable
-        caption="Aspect counts as a table"
-        columns={["aspect", "positive", "negative", "total"]}
-        rows={aspects}
+        caption="Show as a table"
+        columns={["topic", "positive", "negative", "total"]}
+        rows={rows}
       />
     </>
   );
@@ -78,7 +89,7 @@ export function TrendChart({ trend }: { trend: AspectSummary["trend"] }) {
               name="Positive"
               stackId="day"
               fill="var(--positive)"
-              stroke="var(--surface-2)"
+              stroke="var(--surface)"
               strokeWidth={1}
             />
             <Bar
@@ -87,7 +98,7 @@ export function TrendChart({ trend }: { trend: AspectSummary["trend"] }) {
               name="Negative"
               stackId="day"
               fill="var(--negative)"
-              stroke="var(--surface-2)"
+              stroke="var(--surface)"
               strokeWidth={1}
               radius={[4, 4, 0, 0]}
             />
@@ -95,7 +106,7 @@ export function TrendChart({ trend }: { trend: AspectSummary["trend"] }) {
         </ResponsiveContainer>
       </div>
       <DataTable
-        caption="Reviews per day as a table"
+        caption="Show as a table"
         columns={["date", "positive", "negative"]}
         rows={trend}
       />

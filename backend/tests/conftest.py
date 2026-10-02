@@ -14,7 +14,7 @@ import src.models  # noqa: F401  (registers tables on Base.metadata)
 from src.config import settings
 from src.database import Base, get_session
 from src.main import app
-from src.reviews import constants
+from src.reviews import constants, ingestion
 from src.reviews.dependencies import get_http_client
 
 TEST_DB = "steam_reviews_test"
@@ -42,6 +42,9 @@ def _create_test_database() -> None:
 def _fast_steam(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "steam_request_delay_s", 0)
     monkeypatch.setattr(constants, "RETRY_BACKOFF_S", 0)
+    # The pacer is process-wide; a fresh lock per test, since each test has its own loop.
+    monkeypatch.setattr(ingestion, "_pace_lock", asyncio.Lock())
+    monkeypatch.setattr(ingestion, "_last_call", 0.0)
 
 
 @pytest_asyncio.fixture

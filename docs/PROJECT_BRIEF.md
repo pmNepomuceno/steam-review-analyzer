@@ -46,12 +46,14 @@ view Steam's own UI never shows.
 | Other | scikit-learn (sentiment), sentence-transformers model run on ONNX Runtime (aspect embeddings), Docker | Real trained/embedding-based ML, not LLM calls |
 
 ## 5. Data model (rough)
-- `games`: appid, name, last_ingested_at, aspects_status, aspects_error, aspects_processed_at
+- `games`: appid, name, last_ingested_at, aspects_status, aspects_error, aspects_processed_at, aspect_quotes (example sentences per aspect), steam_score_desc, steam_positive, steam_total, steam_rating_checked_at (Steam's own store rating; both quotes and rating are stored by each processing run)
 - `reviews`: id, appid (FK), review_text, voted_up, votes_up, playtime_forever, language, created_at, predicted_sentiment
 - `review_aspects`: review_id (FK), sentence_text, aspect_label, similarity_score (predicted_sentiment moved to `reviews` on 2026-09-24, see DECISIONS.md)
 
 ## 6. Key screens / API endpoints
-- `GET /games/{appid}/aspects` — aggregated per-aspect sentiment, plus reviews per day by sentiment (`trend`)
+- `GET /games` — every game whose analysis is done (appid, name, review_count, analyzed_at); the homepage's list
+- `GET /games/{appid}/aspects` — aggregated per-aspect sentiment with 2-3 example sentences each, reviews per day by sentiment (`trend`), Steam's thumbs on the same reviews (`steam_sample`) and Steam's store rating (`steam_rating`)
+- `GET /steam/search?q=` — proxy for Steam's store search (name, appid, image), cached 60 s per term; the homepage's typeahead
 - `GET /games/{appid}/reviews` — filterable review list (by aspect, sentiment); each review carries its predicted sentiment and aspects
 - Ingestion triggers lazily on first `GET` for an unseen appid
 - Frontend: game selector → per-game dashboard (aspect chart, trend, filtered review list)
@@ -66,6 +68,7 @@ view Steam's own UI never shows.
 | 5 | Aggregation + API | `/games/{appid}/aspects` and `/games/{appid}/reviews` return real data. **Done 2026-09-24** (results stored in `review_aspects` by a batch pass, `scripts/process_reviews.py`, or by a background task on first request; see DECISIONS.md) |
 | 6 | Dashboard | Selector, aspect chart, trend chart, filterable review list against live API. **Done 2026-09-27** (Next.js app in `frontend/`; `/aspects` gained a daily `trend`, `/reviews` items their sentiment and aspects; see DECISIONS.md) |
 | 7 | Polish, deploy, stretch goal | Live URL works, README has eval results; fine-tune DistilBERT if time allows |
+| 8 | Homepage, search, interpretation, theme | Browsable list of analyzed games, live Steam search, plain-language verdict, Steam-vs-aspect comparison and aspect cards with quotes, Steam-inspired theme on desktop and phone. **Done 2026-10-02** (see DECISIONS.md) |
 
 ## 8. Constraints and risks
 - **Time:** 1 week

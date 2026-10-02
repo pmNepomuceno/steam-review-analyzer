@@ -16,7 +16,10 @@ Two inputs:
 - `APPID`: that game's cached reviews, read from the database, as a production run
   processes them. Run it once per game; peak RSS is per process.
 
-Run from `backend/`: `python scripts/check_memory.py [APPID]`
+- `--aspects APPID`: a normal `/aspects` request for a done game (`aspect_summary`: a pure
+  read of stored results and quotes, so neither model is loaded).
+
+Run from `backend/`: `python scripts/check_memory.py [APPID | --aspects APPID]`
 """
 
 import asyncio
@@ -65,8 +68,29 @@ def worst_case_reviews(n_reviews: int) -> list[tuple[int, str]]:
     return [(i, review) for i in range(n_reviews)]
 
 
+async def aspects_request(appid: int) -> None:
+    from src.database import SessionLocal, engine
+    from src.games.service import get_game
+    from src.reviews.service import aspect_summary
+
+    async with SessionLocal() as session:
+        await aspect_summary(session, await get_game(session, appid))
+    await engine.dispose()
+
+
 def main() -> None:
     stages: list[tuple[str, float]] = [("python start", peak_mb())]
+
+    if sys.argv[1:2] == ["--aspects"]:
+        import src.main
+
+        stages.append(("import src.main", peak_mb()))
+        asyncio.run(aspects_request(int(sys.argv[2])))
+        stages.append((f"/aspects request for {sys.argv[2]}", peak_mb()))
+        for name, mb in stages:
+            print(f"{name:44} {mb:7.0f} MB")
+        print(f"\nPeak {stages[-1][1]:.0f} MB ({stages[-1][1] / LIMIT_MB:.0%} of {LIMIT_MB} MB).")
+        return
 
     import src.main  # noqa: F401  the app, its routers and the DB engine
     from src.config import settings

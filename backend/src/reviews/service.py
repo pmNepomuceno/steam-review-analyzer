@@ -24,7 +24,7 @@ from src.ml import aspects, sentiment
 from src.ml.anchors import ASPECTS
 from src.ml.constants import NEGATIVE, POSITIVE
 from src.reviews import constants, ingestion
-from src.reviews.exceptions import InsufficientReviews
+from src.reviews.exceptions import InsufficientReviews, SteamUnavailable
 from src.reviews.models import Review, ReviewAspect
 from src.reviews.schemas import ReviewOut
 
@@ -58,9 +58,7 @@ async def ensure_ingested(session: AsyncSession, http: httpx.AsyncClient, appid:
 
     logger.info("Ingesting reviews for appid %d", appid)
     name = await ingestion.fetch_app_name(http, appid)
-    reviews = await ingestion.fetch_reviews(
-        http, appid, settings.max_reviews, settings.steam_request_delay_s
-    )
+    reviews = await ingestion.fetch_reviews(http, appid, settings.max_reviews)
     if len(reviews) < settings.min_review_count:
         raise InsufficientReviews(appid, len(reviews), settings.min_review_count)
 
@@ -210,7 +208,8 @@ async def _process_owned(session: AsyncSession, appid: int, force: bool) -> int 
             select(Review.id, Review.review_text).where(Review.appid == appid)
         )
         reviews = list(result.all())
-        await session.commit()  # hand the connection back before the CPU work
+        await session.commit()  # hand the connection back before Steam and the CPU work
+        rating = await _fetch_steam_rating(appid)
         logger.info("Processing %d reviews for appid %d", len(reviews), appid)
         labels, units = await asyncio.to_thread(_analyze, reviews)  # keep the event loop free
 
@@ -227,10 +226,18 @@ async def _process_owned(session: AsyncSession, appid: int, force: bool) -> int 
         for i in range(0, len(units), constants.INSERT_CHUNK_SIZE):
             chunk = units[i : i + constants.INSERT_CHUNK_SIZE]
             await session.execute(insert(ReviewAspect).values(chunk))
+        quotes = await _select_quotes(session, appid)  # reads the rows written above
+        now = datetime.now(UTC)
         await session.execute(
             update(Game)
             .where(Game.appid == appid)
-            .values(aspects_status=AspectStatus.DONE, aspects_processed_at=datetime.now(UTC))
+            .values(
+                aspects_status=AspectStatus.DONE,
+                aspects_processed_at=now,
+                aspect_quotes=quotes,
+                steam_rating_checked_at=now,
+                **rating,
+            )
         )
         await session.commit()
     except Exception as exc:
@@ -244,6 +251,26 @@ async def _process_owned(session: AsyncSession, appid: int, force: bool) -> int 
         raise
     logger.info("Stored %d aspect units for appid %d", len(units), appid)
     return len(reviews)
+
+
+async def _fetch_steam_rating(appid: int) -> dict[str, Any]:
+    """Steam's store rating as `games` columns, or {} (keep what is stored); best effort.
+
+    Fetched once per run, with no transaction open, so a slow or failing Steam delays the run
+    by at most the client's retries and never fails it. The run still records that it asked
+    (`steam_rating_checked_at`), so a game Steam has no rating for isn't asked again until
+    the next --force run.
+    """
+    try:
+        async with ingestion.new_client() as http:
+            rating = await ingestion.fetch_review_summary(http, appid)
+    except SteamUnavailable as exc:
+        logger.warning("No Steam rating for appid %d: %s", appid, exc.detail)
+        return {}
+    if rating is None:
+        logger.warning("No Steam rating for appid %d: no query_summary", appid)
+        return {}
+    return rating
 
 
 async def fail_interrupted_runs(session: AsyncSession, appid: int | None = None) -> int:
@@ -321,7 +348,7 @@ async def on_demand_blocked(
         detail="This deployment only serves games analyzed ahead of time: on its free-tier "
         "host, a new game would take 14-19 minutes to analyze. Run the project locally to "
         "analyze any appid.",
-        available=[AvailableGame(appid=a, name=n) for a, n in available],
+        available=[AvailableGame(appid=g.appid, name=g.name) for g in available],
     )
     return JSONResponse(status_code=403, content=body.model_dump())
 
@@ -374,13 +401,54 @@ async def unprocessed_response(session: AsyncSession, game: Game) -> JSONRespons
     return JSONResponse(status_code=202, content=body.model_dump(), background=task)
 
 
-async def aspect_summary(session: AsyncSession, appid: int) -> dict[str, Any]:
-    """Positive/negative counts per aspect and per day for a processed app.
+async def aspect_summary(session: AsyncSession, game: Game) -> dict[str, Any]:
+    """Positive/negative counts per aspect and per day for a processed app, with its quotes.
+
+    A pure read: the quotes were picked by the run that processed the app
+    (`games.aspect_quotes`). No model is loaded here.
+    """
+    summary = await _summary_counts(session, game.appid)
+    if game.aspect_quotes is None:
+        logger.warning(
+            "appid %d was processed before quotes and Steam's rating were stored; serving "
+            "it without them until scripts/process_reviews.py --force %d",
+            game.appid, game.appid,
+        )
+    for entry in summary["aspects"]:
+        entry["quotes"] = (game.aspect_quotes or {}).get(entry["aspect"], [])
+    return {"appid": game.appid, "status": "ready", **summary}
+
+
+async def _select_quotes(session: AsyncSession, appid: int) -> dict[str, list[dict[str, str]]]:
+    """Each aspect's example sentences (`_pick_quotes`), from the app's stored results.
+
+    Run once by `process_reviews` inside its final write transaction, so it sees that run's
+    rows; the result is stored in `games.aspect_quotes`. A weak aspect (under 50% positive,
+    or well below the game's overall share) leans negative, any other positive.
+    """
+    summary = await _summary_counts(session, appid)
+    candidates = await _quote_candidates(session, appid)
+    overall_pct = summary["overall"]["positive_pct"] or 0
+    quotes = {}
+    for entry in summary["aspects"]:
+        pct = entry["positive_pct"]
+        weak = pct is not None and (
+            pct < 50 or pct < overall_pct - constants.QUOTE_WEAK_MARGIN_PCT
+        )
+        quotes[entry["aspect"]] = _pick_quotes(
+            candidates.get(entry["aspect"], {}), NEGATIVE if weak else POSITIVE
+        )
+    return quotes
+
+
+async def _summary_counts(session: AsyncSession, appid: int) -> dict[str, Any]:
+    """The counts behind /aspects: `overall`, `aspects` (no quotes), `trend`, `steam_sample`.
 
     Counts are distinct reviews, not units: sentiment is predicted per review, so a review
     with three bugs sentences counts once under bugs. `overall` counts every review, also
     those whose units are all "none" or that have no units at all. `trend` has one point
     per UTC day from the oldest to the newest review, days without reviews included as 0.
+    `steam_sample` counts Steam's own thumbs (voted_up) on the same reviews.
     """
     # ponytail: two queries; one GROUP BY GROUPING SETS would do (known limitation, see
     # DECISIONS.md).
@@ -397,15 +465,18 @@ async def aspect_summary(session: AsyncSession, appid: int) -> dict[str, Any]:
     counts = {(label, sent): n for label, sent, n in rows}
     day = cast(func.timezone("UTC", Review.created_at), Date)
     daily = await session.execute(
-        select(day, Review.predicted_sentiment, func.count())
+        select(day, Review.predicted_sentiment, Review.voted_up, func.count())
         .where(Review.appid == appid)
-        .group_by(day, Review.predicted_sentiment)
+        .group_by(day, Review.predicted_sentiment, Review.voted_up)
     )
     by_day: dict[date, dict[str, int]] = {}
     overall_counts: dict[str, int] = {}
-    for d, sent, n in daily:
-        by_day.setdefault(d, {})[sent] = n
+    voted_up = {True: 0, False: 0}
+    for d, sent, up, n in daily:
+        day_counts = by_day.setdefault(d, {})
+        day_counts[sent] = day_counts.get(sent, 0) + n
         overall_counts[sent] = overall_counts.get(sent, 0) + n
+        voted_up[up] += n
     trend = []
     if by_day:
         d, last = min(by_day), max(by_day)
@@ -427,15 +498,78 @@ async def aspect_summary(session: AsyncSession, appid: int) -> dict[str, Any]:
         }
 
     return {
-        "appid": appid,
-        "status": "ready",
         "overall": entry(overall_counts.get(POSITIVE, 0), overall_counts.get(NEGATIVE, 0)),
-        "aspects": [
-            {
-                "aspect": aspect,
-                **entry(counts.get((aspect, POSITIVE), 0), counts.get((aspect, NEGATIVE), 0)),
-            }
-            for aspect in ASPECTS  # "none" is not one of them
+        "aspects": [  # "none" is not one of ASPECTS
+            {"aspect": a, **entry(counts.get((a, POSITIVE), 0), counts.get((a, NEGATIVE), 0))}
+            for a in ASPECTS
         ],
         "trend": trend,
+        "steam_sample": entry(voted_up[True], voted_up[False]),
     }
+
+
+async def _quote_candidates(session: AsyncSession, appid: int) -> dict[str, dict[str, list[str]]]:
+    """aspect -> sentiment -> the most aspect-like sentences of that game, best first.
+
+    Ranked by similarity to the aspect's anchors, the same score that tagged them, within
+    QUOTE_MIN_CHARS..QUOTE_MAX_CHARS. A sentence is kept only if the sentiment model, run on
+    the sentence alone, agrees with its review's predicted sentiment: otherwise a positive
+    remark inside a negative review ("great performance, no lag") would be shown as a
+    complaint. The model is trained on whole reviews and is weak on single sentences, so
+    agreement filters out more good quotes than it needs to; it is a precision filter.
+    """
+    rank = func.row_number().over(
+        partition_by=(ReviewAspect.aspect_label, Review.predicted_sentiment),
+        order_by=(ReviewAspect.similarity_score.desc(), ReviewAspect.id),
+    )
+    ranked = (
+        select(
+            ReviewAspect.aspect_label,
+            Review.predicted_sentiment,
+            ReviewAspect.sentence_text,
+            rank.label("rank"),
+        )
+        .join(Review, Review.id == ReviewAspect.review_id)
+        .where(
+            Review.appid == appid,
+            ReviewAspect.aspect_label.in_(ASPECTS),
+            func.length(ReviewAspect.sentence_text).between(
+                constants.QUOTE_MIN_CHARS, constants.QUOTE_MAX_CHARS
+            ),
+        )
+        .subquery()
+    )
+    rows = await session.execute(
+        select(ranked.c.aspect_label, ranked.c.predicted_sentiment, ranked.c.sentence_text)
+        .where(ranked.c.rank <= constants.QUOTE_CANDIDATES)
+        .order_by(ranked.c.rank)
+    )
+    rows = list(rows)
+    agrees = await asyncio.to_thread(sentiment.predict_labels, [s for _, _, s in rows])
+    out: dict[str, dict[str, list[str]]] = {}
+    for (aspect, sent, sentence), own in zip(rows, agrees, strict=True):
+        if own == sent:
+            out.setdefault(aspect, {}).setdefault(sent, []).append(sentence)
+    return out
+
+
+def _pick_quotes(candidates: dict[str, list[str]], preferred: str) -> list[dict[str, str]]:
+    """Up to QUOTES_PER_ASPECT distinct sentences, from the `preferred` sentiment first.
+
+    The other sentiment fills in only when the preferred one has fewer than
+    QUOTE_MIN_FROM_PREFERRED, so a weak aspect's examples show what people complain about.
+    """
+    other = POSITIVE if preferred == NEGATIVE else NEGATIVE
+    picked: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for sent in (preferred, other):
+        if sent == other and len(picked) >= constants.QUOTE_MIN_FROM_PREFERRED:
+            break
+        for sentence in candidates.get(sent, []):
+            if len(picked) == constants.QUOTES_PER_ASPECT:
+                break
+            key = sentence.casefold()
+            if key not in seen:
+                seen.add(key)
+                picked.append({"text": sentence, "sentiment": sent})
+    return picked

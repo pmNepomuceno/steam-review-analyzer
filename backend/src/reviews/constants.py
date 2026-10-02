@@ -2,6 +2,7 @@ from enum import StrEnum
 
 APPDETAILS_URL = "https://store.steampowered.com/api/appdetails"
 APPREVIEWS_URL = "https://store.steampowered.com/appreviews/{appid}"
+STORESEARCH_URL = "https://store.steampowered.com/api/storesearch/"
 
 STEAM_PAGE_SIZE = 100  # max num_per_page Steam accepts
 STEAM_LANGUAGE = "english"
@@ -12,6 +13,17 @@ RETRY_BACKOFF_S = 1.0  # doubled after each failed attempt
 INGEST_LOCK_NAMESPACE = 1  # first key of the two-int Postgres advisory lock
 PROCESS_LOCK_NAMESPACE = 2  # held by a live processing run (service.process_reviews)
 INSERT_CHUNK_SIZE = 500
+
+# Example sentences per aspect in /aspects: the highest-similarity units within these
+# lengths (shorter ones are mostly "Great story."; longer ones are rambling run-ons).
+QUOTES_PER_ASPECT = 3
+QUOTE_MIN_FROM_PREFERRED = 2  # fewer than this from the preferred side -> fill from the other
+QUOTE_CANDIDATES = 10  # per aspect and sentiment, before dropping duplicate texts
+QUOTE_MIN_CHARS = 30
+QUOTE_MAX_CHARS = 220
+# An aspect's examples lean negative when it is a weak spot: under half positive, or this
+# many points below the game's overall share. A 94% aspect in a 95% game is no weak spot.
+QUOTE_WEAK_MARGIN_PCT = 5.0
 
 
 class Skipped(StrEnum):

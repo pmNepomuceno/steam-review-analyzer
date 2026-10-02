@@ -2,13 +2,14 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from src.database import SessionLocal
 from src.exceptions import AppError
 from src.games.router import router as games_router
+from src.games.router import steam_router
+from src.reviews import ingestion
 from src.reviews.router import router as reviews_router
 from src.reviews.service import fail_interrupted_runs
 
@@ -23,9 +24,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await fail_interrupted_runs(session)
     except Exception:
         logger.exception("Could not check for interrupted runs at startup")
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(20.0), headers={"User-Agent": "steam-review-analyzer/0.1"}
-    ) as http:
+    async with ingestion.new_client() as http:
         app.state.http = http
         yield
 
@@ -33,6 +32,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="Steam Review Analyzer", lifespan=lifespan)
 app.include_router(games_router)
 app.include_router(reviews_router)
+app.include_router(steam_router)
 
 
 @app.exception_handler(AppError)

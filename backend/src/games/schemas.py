@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel
@@ -13,8 +13,27 @@ class SentimentCounts(BaseModel):
     positive_pct: float | None  # None when total is 0
 
 
+class Quote(BaseModel):
+    """One aspect-tagged sentence, with the predicted sentiment of the review it came from."""
+
+    text: str
+    sentiment: Literal["positive", "negative"]
+
+
 class AspectSentiment(SentimentCounts):
     aspect: str
+    # Up to 3 example sentences: mostly negative for a weak aspect (under 50% positive, or
+    # well below the game's overall share), mostly positive otherwise; may be empty.
+    quotes: list[Quote]
+
+
+class SteamRating(BaseModel):
+    """Steam's own store rating, as its store page shows it: English reviews, all time."""
+
+    score_desc: str  # Steam's label, e.g. "Very Positive"
+    positive: int
+    total: int
+    positive_pct: float | None  # None when total is 0
 
 
 class TrendPoint(BaseModel):
@@ -32,6 +51,9 @@ class AspectSummary(BaseModel):
     overall: SentimentCounts  # every processed review, including those with no aspect
     aspects: list[AspectSentiment]
     trend: list[TrendPoint]  # oldest day first, every day between oldest and newest review
+    # Steam's thumbs (voted_up) on the same reviews as `overall`, for a like-for-like check.
+    steam_sample: SentimentCounts
+    steam_rating: SteamRating | None  # None if Steam had none when the game was processed
 
 
 class ProcessingStatus(BaseModel):
@@ -53,6 +75,17 @@ class FailedStatus(BaseModel):
 class AvailableGame(BaseModel):
     appid: int
     name: str
+
+
+class GameListItem(AvailableGame):
+    review_count: int
+    analyzed_at: datetime | None  # games.aspects_processed_at
+
+
+class SearchResult(BaseModel):
+    appid: int
+    name: str
+    image: str | None  # Steam's small capsule image URL
 
 
 class UnavailableStatus(BaseModel):

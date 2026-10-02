@@ -8,6 +8,14 @@ Both ML components are trained or hand-built and evaluated here: a TF-IDF + logi
 
 **The live demo serves five games analyzed ahead of time** (Portal 2, Hades, Starfield, PAYDAY 3, Cities: Skylines II). Any other appid gets a page listing those five. Run locally, the full pipeline works for any appid: fetch, cache, analyze, dashboard. The demo is limited by its host's CPU, not by missing features; see [Why the demo serves a fixed set of games](#why-the-demo-serves-a-fixed-set-of-games).
 
+## Screenshots
+
+![Homepage with the five analyzed games](docs/img/home.png)
+
+![Steam search typeahead](docs/img/search.png)
+
+![Per-game dashboard (Hades): aspect chart, verdict and example quotes](docs/img/dashboard.png)
+
 ## How it works
 
 ```
@@ -118,8 +126,10 @@ After changing anchors or the threshold, rerun `python scripts/evaluate_aspects.
 
 | Endpoint | |
 |---|---|
+| `GET /games` | Games whose analysis is done, with review count and analysis date |
 | `GET /games/{appid}/reviews?limit=&offset=&aspect=&sentiment=` | Cached reviews with predicted sentiment and aspects; ingests on first call |
-| `GET /games/{appid}/aspects` | Per-aspect positive/negative review counts, overall counts, daily trend |
+| `GET /games/{appid}/aspects` | Per-aspect positive/negative review counts with example sentences, overall counts, daily trend, Steam's thumbs on the same reviews and Steam's store rating |
+| `GET /steam/search?q=` | Steam store search by name or appid (proxied for CORS, cached 60 s per term) |
 | `GET /health` | Liveness |
 
 | Status | Meaning |
@@ -138,7 +148,7 @@ After changing anchors or the threshold, rerun `python scripts/evaluate_aspects.
 cd backend && source .venv/bin/activate
 pytest -q                          # needs the db container; Steam is mocked with respx
 ruff check .
-python scripts/check_memory.py     # peak RSS vs the 512 MB free tier: synthetic worst case, or pass an APPID for its cached reviews
+python scripts/check_memory.py     # peak RSS vs the 512 MB free tier: synthetic worst case, an APPID for its cached reviews, or --aspects APPID for one /aspects request
 
 cd ../frontend
 npm test && npm run lint && npm run typecheck
@@ -175,5 +185,5 @@ npm test && npm run lint && npm run typecheck
 
 - `backend/src/` has one package per domain (`games/`, `reviews/`, `ml/`), each with its router, schemas, models and service. `ml/anchors.py` holds the anchor phrases and `ml/constants.py` holds the threshold.
 - `backend/scripts/` holds training, evaluation, batch processing and the memory check.
-- `frontend/app/` has the selector page and the per-game dashboard. `frontend/lib/api.ts` maps HTTP status to UI state.
+- `frontend/app/` has the homepage (game cards and Steam search) and the per-game dashboard. `frontend/lib/api.ts` maps HTTP status to UI state; `frontend/lib/insights.ts` turns the numbers into the plain-language verdict and comparison.
 - `docs/PROJECT_BRIEF.md` covers scope and milestones. `docs/DECISIONS.md` logs every decision with its reason and measured numbers. `docs/eval/` holds the eval reports and the hand labels.

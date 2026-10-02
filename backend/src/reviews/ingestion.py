@@ -2,22 +2,47 @@
 
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
+from src.config import settings
 from src.games.exceptions import GameNotFound
 from src.reviews import constants
 from src.reviews.exceptions import SteamUnavailable
 
 logger = logging.getLogger(__name__)
 
+# One pace for every Steam call in this process (ingestion pages, store search, the rating
+# fetch, retries included): Steam's informal rate limit is per client, not per endpoint.
+# Calls start one at a time, at least `steam_request_delay_s` apart, and may overlap.
+_pace_lock = asyncio.Lock()
+_last_call = 0.0  # time.monotonic() when the last Steam call started
+
+
+async def _pace() -> None:
+    global _last_call
+    async with _pace_lock:
+        wait = _last_call + settings.steam_request_delay_s - time.monotonic()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last_call = time.monotonic()
+
+
+def new_client() -> httpx.AsyncClient:
+    """The Steam client settings: the API's shared client, and a processing run's own."""
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(20.0), headers={"User-Agent": "steam-review-analyzer/0.1"}
+    )
+
 
 async def _get_json(http: httpx.AsyncClient, url: str, params: dict[str, Any]) -> Any:
     """GET with retries on transport errors, 429 and 5xx. Other failures raise immediately."""
     backoff = constants.RETRY_BACKOFF_S
     for attempt in range(1, constants.RETRY_ATTEMPTS + 1):
+        await _pace()
         try:
             resp = await http.get(url, params=params)
         except httpx.TransportError as exc:
@@ -61,6 +86,48 @@ async def fetch_app_name(http: httpx.AsyncClient, appid: int) -> str:
     return name
 
 
+async def fetch_review_summary(http: httpx.AsyncClient, appid: int) -> dict[str, Any] | None:
+    """Steam's store rating for the app, as `games` columns: English reviews by Steam purchasers,
+    all time, which is what a logged-out English visitor sees on the store page.
+
+    None when Steam answers without a usable `query_summary`.
+    """
+    payload = await _get_json(
+        http,
+        constants.APPREVIEWS_URL.format(appid=appid),
+        {"json": 1, "language": constants.STEAM_LANGUAGE, "purchase_type": "steam",
+         "num_per_page": 0, "cursor": "*"},
+    )
+    summary = payload.get("query_summary") if isinstance(payload, dict) else None
+    try:
+        return {
+            "steam_score_desc": str(summary["review_score_desc"]),
+            "steam_positive": int(summary["total_positive"]),
+            "steam_total": int(summary["total_reviews"]),
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+async def search_store(http: httpx.AsyncClient, term: str) -> list[dict[str, Any]]:
+    """Apps matching `term` (a name or an appid) in Steam's store search, best match first."""
+    payload = await _get_json(
+        http, constants.STORESEARCH_URL, {"term": term, "l": constants.STEAM_LANGUAGE, "cc": "us"}
+    )
+    items = payload.get("items") if isinstance(payload, dict) else None
+    results = []
+    for item in items or []:
+        try:
+            if item.get("type") == "app":
+                results.append(
+                    {"appid": int(item["id"]), "name": str(item["name"]),
+                     "image": item.get("tiny_image")}
+                )
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+    return results
+
+
 def parse_review(raw: dict[str, Any]) -> dict[str, Any] | None:
     """Map one Steam review to a `reviews` row, or None if it is empty or malformed."""
     try:
@@ -81,9 +148,12 @@ def parse_review(raw: dict[str, Any]) -> dict[str, Any] | None:
 
 
 async def fetch_reviews(
-    http: httpx.AsyncClient, appid: int, max_reviews: int, delay_s: float
+    http: httpx.AsyncClient, appid: int, max_reviews: int
 ) -> list[dict[str, Any]]:
-    """Page through Steam's cursor-based review API until exhausted or `max_reviews` is hit."""
+    """Page through Steam's cursor-based review API until exhausted or `max_reviews` is hit.
+
+    Pages are paced by `_get_json`, like every other Steam call.
+    """
     url = constants.APPREVIEWS_URL.format(appid=appid)
     reviews: dict[int, dict[str, Any]] = {}
     seen_cursors = {"*"}
@@ -114,6 +184,5 @@ async def fetch_reviews(
         if not cursor or cursor in seen_cursors:
             break
         seen_cursors.add(cursor)
-        await asyncio.sleep(delay_s)
 
     return list(reviews.values())[:max_reviews]
