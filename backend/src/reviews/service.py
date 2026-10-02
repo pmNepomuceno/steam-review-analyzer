@@ -26,7 +26,7 @@ from src.ml.constants import NEGATIVE, POSITIVE
 from src.reviews import constants, ingestion
 from src.reviews.exceptions import InsufficientReviews, SteamUnavailable
 from src.reviews.models import Review, ReviewAspect
-from src.reviews.schemas import ReviewOut
+from src.reviews.schemas import AspectMatch, ReviewOut
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +77,14 @@ async def list_reviews(
     offset: int,
     aspect: str | None = None,
     sentiment_label: str | None = None,
+    sort: constants.ReviewSort = constants.ReviewSort.NEWEST,
+    day: date | None = None,
 ) -> tuple[int, list[ReviewOut]]:
-    """A page of the app's reviews, newest first, each with its stored aspects.
+    """A page of the app's reviews in `sort` order, each with its stored aspects.
 
     `aspect` keeps reviews with at least one unit tagged with it; `sentiment_label` keeps
     reviews predicted that way. Both need the app to be processed (`process_reviews`).
+    `day` keeps reviews created on that UTC day, the same days as the /aspects trend.
     """
     where = [Review.appid == appid]
     if aspect is not None:
@@ -91,35 +94,46 @@ async def list_reviews(
         where.append(exists(unit))
     if sentiment_label is not None:
         where.append(Review.predicted_sentiment == sentiment_label)
+    if day is not None:
+        start = datetime.combine(day, datetime.min.time(), UTC)
+        where += [Review.created_at >= start, Review.created_at < start + timedelta(days=1)]
 
+    newest = (Review.created_at.desc(), Review.id.desc())
+    order = {
+        constants.ReviewSort.NEWEST: newest,
+        constants.ReviewSort.HELPFUL: (Review.votes_up.desc(), *newest),
+        constants.ReviewSort.PLAYTIME: (Review.playtime_forever.desc(), *newest),
+    }[sort]
     total = await session.scalar(select(func.count()).select_from(Review).where(*where))
     rows = await session.scalars(
-        select(Review)
-        .where(*where)
-        .order_by(Review.created_at.desc(), Review.id.desc())
-        .limit(limit)
-        .offset(offset)
+        select(Review).where(*where).order_by(*order).limit(limit).offset(offset)
     )
     reviews = list(rows)
-    tags = await session.execute(
-        select(ReviewAspect.review_id, ReviewAspect.aspect_label)
+    units = await session.execute(
+        select(ReviewAspect.review_id, ReviewAspect.aspect_label, ReviewAspect.sentence_text)
         .where(
             ReviewAspect.review_id.in_([r.id for r in reviews]),
             # Not "none", nor a label dropped from ANCHORS since the last --force run.
             ReviewAspect.aspect_label.in_(ASPECTS),
         )
-        .distinct()
+        .order_by(ReviewAspect.id)  # inserted in review order
     )
-    by_review: dict[int, list[str]] = {}
-    for review_id, label in tags:
-        by_review.setdefault(review_id, []).append(label)
-    items = [
-        ReviewOut.model_validate(r).model_copy(
-            update={"aspects": sorted(by_review.get(r.id, []), key=ASPECTS.index)}
+    by_review: dict[int, list[AspectMatch]] = {}
+    for review_id, label, sentence in units:
+        by_review.setdefault(review_id, []).append(AspectMatch(aspect=label, text=sentence))
+    items = []
+    for r in reviews:
+        matches = by_review.get(r.id, [])
+        labels = sorted({m.aspect for m in matches}, key=ASPECTS.index)
+        items.append(
+            ReviewOut.model_validate(r).model_copy(update={"aspects": labels, "matches": matches})
         )
-        for r in reviews
-    ]
     return total or 0, items
+
+
+def _utc_day(column):
+    """A timestamptz column as its UTC calendar day, the unit of the /aspects trend."""
+    return cast(func.timezone("UTC", column), Date)
 
 
 def _analyze(reviews: list[tuple[int, str]]) -> tuple[dict[int, str], list[dict[str, Any]]]:
@@ -339,7 +353,7 @@ async def on_demand_blocked(
     """
     if settings.allow_on_demand_processing:
         return None
-    if games_service.is_ingested(game) and game.aspects_status != AspectStatus.PENDING:
+    if games_service.opens_without_on_demand(game):
         return None
     available = await games_service.list_processed(session)
     body = UnavailableStatus(
@@ -442,13 +456,14 @@ async def _select_quotes(session: AsyncSession, appid: int) -> dict[str, list[di
 
 
 async def _summary_counts(session: AsyncSession, appid: int) -> dict[str, Any]:
-    """The counts behind /aspects: `overall`, `aspects` (no quotes), `trend`, `steam_sample`.
+    """The counts behind /aspects, quotes aside: `overall`, `aspects`, `trend` and the rest.
 
     Counts are distinct reviews, not units: sentiment is predicted per review, so a review
     with three bugs sentences counts once under bugs. `overall` counts every review, also
     those whose units are all "none" or that have no units at all. `trend` has one point
     per UTC day from the oldest to the newest review, days without reviews included as 0.
-    `steam_sample` counts Steam's own thumbs (voted_up) on the same reviews as `overall`.
+    `steam_sample` counts Steam's own thumbs (voted_up) on the same reviews as `overall`,
+    and `disagreements` those where the model's call and the reviewer's thumb differ.
     """
     # ponytail: two queries; one GROUP BY GROUPING SETS would do (known limitation, see
     # DECISIONS.md).
@@ -463,7 +478,7 @@ async def _summary_counts(session: AsyncSession, appid: int) -> dict[str, Any]:
         .group_by(ReviewAspect.aspect_label, Review.predicted_sentiment)
     )
     counts = {(label, sent): n for label, sent, n in rows}
-    day = cast(func.timezone("UTC", Review.created_at), Date)
+    day = _utc_day(Review.created_at)
     daily = await session.execute(
         select(day, Review.predicted_sentiment, Review.voted_up, func.count())
         .where(Review.appid == appid)
@@ -472,12 +487,15 @@ async def _summary_counts(session: AsyncSession, appid: int) -> dict[str, Any]:
     by_day: dict[date, dict[str, int]] = {}
     overall_counts: dict[str, int] = {}
     voted_up = {True: 0, False: 0}
+    disagreements = 0
     for d, sent, up, n in daily:
         day_counts = by_day.setdefault(d, {})
         day_counts[sent] = day_counts.get(sent, 0) + n
         overall_counts[sent] = overall_counts.get(sent, 0) + n
         if sent is not None:  # only the reviews `overall` counts
             voted_up[up] += n
+            if (sent == POSITIVE) != up:
+                disagreements += n
     trend = []
     if by_day:
         d, last = min(by_day), max(by_day)
@@ -498,6 +516,7 @@ async def _summary_counts(session: AsyncSession, appid: int) -> dict[str, Any]:
         ],
         "trend": trend,
         "steam_sample": entry(voted_up[True], voted_up[False]),
+        "disagreements": disagreements,
     }
 
 

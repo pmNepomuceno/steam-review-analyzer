@@ -32,7 +32,12 @@ export type AspectSummary = {
   trend: { date: string; positive: number; negative: number }[];
   steam_sample: SentimentCounts; // Steam's thumbs (voted_up) on the same reviews as `overall`
   steam_rating: SteamRating | null; // null until the API could fetch it from Steam
+  disagreements?: number; // reviews where the model's call and the reviewer's thumb differ
 };
+
+export type AspectMatch = { aspect: string; text: string };
+
+export type ReviewSort = "helpful" | "newest" | "playtime";
 
 export type Review = {
   id: number;
@@ -44,6 +49,7 @@ export type Review = {
   created_at: string;
   predicted_sentiment: Sentiment | null;
   aspects: string[];
+  matches?: AspectMatch[]; // the sentences behind `aspects`; absent from an older API
 };
 
 export type ReviewPage = {
@@ -65,7 +71,13 @@ export type GameListItem = AvailableGame & {
 };
 
 // GET /steam/search
-export type SearchResult = { appid: number; name: string; image: string | null };
+// `availability` is absent from an API older than it.
+export type SearchResult = {
+  appid: number;
+  name: string;
+  image: string | null;
+  availability?: "analyzed" | "on_demand" | "unavailable";
+};
 
 /** Steam's wide store banner for an app; not every app has one (hide it on error). */
 export const headerImage = (appid: number) =>

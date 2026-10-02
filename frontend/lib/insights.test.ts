@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import type { AspectStats } from "./api";
-import { comparison, quoteText, spike, storePct, strength, verdict } from "./insights";
+import {
+  comparison,
+  highlight,
+  quoteText,
+  spike,
+  storePct,
+  strength,
+  timeAgo,
+  verdict,
+} from "./insights";
 
 const aspect = (name: string, positive_pct: number | null, total = 100): AspectStats => ({
   aspect: name,
@@ -68,15 +77,37 @@ describe("comparison", () => {
       aspect: "bugs",
       aspectPct: 31,
       weaker: true,
-      text: "Steam says 66% positive, but satisfaction on bugs and stability is only 31%.",
+      text: "66% of reviewers recommend it on Steam, but only 31% of reviews about bugs and stability read as positive.",
     });
+  });
+
+  it("softens the wording for a narrow gap", () => {
+    const result = comparison({ aspects: [aspect("price", 72)], steam_sample: sample(80) });
+    expect(result?.weaker).toBe(true);
+    expect(result?.text).toBe(
+      "80% of reviewers recommend it on Steam, but reviews about price and value are less positive: 72%.",
+    );
+  });
+
+  it("drops the 'even' when a topic keeps up with a low Steam share", () => {
+    const result = comparison({ aspects: [aspect("bugs", 37)], steam_sample: sample(40) });
+    expect(result?.text).toBe(
+      "40% of reviewers recommend it on Steam; bugs and stability, the lowest-rated topic, reads 37% positive.",
+    );
   });
 
   it("says so when even the weakest aspect keeps up", () => {
     const portal = [aspect("story", 98.6), aspect("gameplay", 98.4)];
     expect(comparison({ aspects: portal, steam_sample: sample(98.3) })?.text).toBe(
-      "Steam says 98% positive, and even gameplay, the lowest-rated topic, holds 98%.",
+      "98% of reviewers recommend it on Steam, and even gameplay, the lowest-rated topic, reads 98% positive.",
     );
+  });
+
+  it("calls no high topic a weak spot, however far below Steam", () => {
+    // Portal 2: price and value at 92% against 98% is not a complaint.
+    const result = comparison({ aspects: [aspect("price", 92.1)], steam_sample: sample(98.3) });
+    expect(result?.weaker).toBe(false);
+    expect(result?.text).toMatch(/even price and value, the lowest-rated topic, reads 92% positive/);
   });
 
   it("is absent without a judged aspect or a Steam share", () => {
@@ -129,5 +160,55 @@ describe("strength", () => {
     const hades = [aspect("price", 95.2), aspect("gameplay", 94.0)];
     expect(strength({ aspects: hades })).toBe(verdict({ aspects: hades }));
     expect(strength({ aspects: [aspect("gameplay", 80)] })).toBeNull();
+  });
+});
+
+describe("highlight", () => {
+  const text = "Runs fine. It crashes a lot. Price is fair.";
+
+  it("cuts the text around the matched sentences, in order", () => {
+    expect(
+      highlight(text, [
+        { aspect: "bugs", text: "It crashes a lot." },
+        { aspect: "price", text: "Price is fair." },
+      ]),
+    ).toEqual([
+      { text: "Runs fine. ", aspect: null },
+      { text: "It crashes a lot.", aspect: "bugs" },
+      { text: " ", aspect: null },
+      { text: "Price is fair.", aspect: "price" },
+    ]);
+  });
+
+  it("skips a match it can't find and one that overlaps", () => {
+    expect(
+      highlight(text, [
+        { aspect: "bugs", text: "[b]It crashes[/b]" },
+        { aspect: "bugs", text: "It crashes a lot." },
+        { aspect: "price", text: "crashes" },
+      ]),
+    ).toEqual([
+      { text: "Runs fine. ", aspect: null },
+      { text: "It crashes a lot.", aspect: "bugs" },
+      { text: " Price is fair.", aspect: null },
+    ]);
+    expect(highlight(text, [])).toEqual([{ text, aspect: null }]);
+  });
+});
+
+describe("timeAgo", () => {
+  const now = new Date(2026, 9, 2, 9, 0).getTime(); // local time, like timeAgo's days
+  const at = (...args: [number, number, number, number?]) => new Date(...args).toISOString();
+
+  it("counts calendar days, not 24-hour spans", () => {
+    expect(timeAgo(at(2026, 9, 2, 1), now)).toBe("today");
+    expect(timeAgo(at(2026, 9, 1, 23), now)).toBe("yesterday");
+    expect(timeAgo(at(2026, 8, 29), now)).toBe("3 days ago");
+  });
+
+  it("moves to weeks, months and years", () => {
+    expect(timeAgo(at(2026, 8, 18), now)).toBe("2 weeks ago");
+    expect(timeAgo(at(2026, 6, 2), now)).toBe("3 months ago");
+    expect(timeAgo(at(2024, 9, 2), now)).toBe("2 years ago");
   });
 });

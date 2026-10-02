@@ -49,7 +49,7 @@ export function TrendChart({ trend, spike }: { trend: AspectSummary["trend"]; sp
         role="img"
         aria-label={
           first && last
-            ? `Bar chart of positive and negative reviews per day, ${formatDate(first)} to ${formatDate(last)}. The numbers are in the table below.`
+            ? `Bar chart of reviews per day the model reads as positive and negative, ${formatDate(first)} to ${formatDate(last)}. The numbers are in the table below.`
             : "Bar chart of reviews per day"
         }
       >
@@ -61,7 +61,13 @@ export function TrendChart({ trend, spike }: { trend: AspectSummary["trend"]; sp
             <Tooltip {...TOOLTIP} labelFormatter={(d) => formatDate(String(d))} />
             <Legend {...LEGEND} />
             {spike && (
-              <ReferenceLine x={spike} stroke="var(--text-2)" strokeDasharray="3 3" ifOverflow="extendDomain" />
+              <ReferenceLine
+                x={spike}
+                stroke="var(--text-2)"
+                strokeDasharray="3 3"
+                ifOverflow="extendDomain"
+                label={{ value: "Spike", position: "insideTopRight", fill: "var(--text-2)", fontSize: 12 }}
+              />
             )}
             {/* A 1px surface-colored stroke on each segment makes a 2px gap between them. */}
             <Bar

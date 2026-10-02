@@ -56,6 +56,8 @@ class AspectSummary(BaseModel):
     trend: list[TrendPoint]  # oldest day first, every day between oldest and newest review
     # Steam's thumbs (voted_up) on the same reviews as `overall`, for a like-for-like check.
     steam_sample: SentimentCounts
+    # Reviews in `overall` whose predicted sentiment differs from the reviewer's thumb.
+    disagreements: int
     steam_rating: SteamRating | None  # None if Steam had none when the game was processed
 
 
@@ -96,6 +98,9 @@ class SearchResult(BaseModel):
     appid: int
     name: str
     image: str | None  # Steam's small capsule image URL
+    # What opening it here gives: results ready ("analyzed"), an analysis run first
+    # ("on_demand"), or the 403 of a deployment without on-demand processing ("unavailable").
+    availability: Literal["analyzed", "on_demand", "unavailable"]
 
 
 class UnavailableStatus(BaseModel):

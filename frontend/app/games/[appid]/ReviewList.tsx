@@ -3,16 +3,32 @@
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-import { fetchState, pageInfo, type Loaded, type ReviewPage } from "../../../lib/api";
-import { copyFor, formatDate } from "../../../lib/insights";
+import {
+  fetchState,
+  pageInfo,
+  type Loaded,
+  type Review,
+  type ReviewPage,
+  type ReviewSort,
+} from "../../../lib/api";
+import { copyFor, formatDate, highlight } from "../../../lib/insights";
+import Thumb from "./Thumb";
 
 const PAGE_SIZE = 20;
+
+// The first is the default, left out of the URL. Most helpful first: the newest reviews of a
+// game in the news are often off-topic noise (Cities: Skylines II's Sep 23 review bomb).
+const SORTS: [ReviewSort, string][] = [
+  ["helpful", "Most helpful"],
+  ["newest", "Newest"],
+  ["playtime", "Most played"],
+];
 
 const playtime = (minutes: number) =>
   minutes < 60 ? "under 1 h played" : `${Math.round(minutes / 60).toLocaleString("en-US")} h played`;
 
 export default function ReviewList({ appid, aspects }: { appid: number; aspects: string[] }) {
-  // Filters and page live in the URL (?aspect=bugs&sentiment=negative&offset=20), so a
+  // Filters, sort and page live in the URL (?aspect=bugs&sentiment=negative&offset=20), so a
   // filtered view can be linked to and survives a reload.
   // Unknown values (a stale or hand-edited link) are ignored rather than sent on for a 422.
   const search = useSearchParams();
@@ -20,6 +36,11 @@ export default function ReviewList({ appid, aspects }: { appid: number; aspects:
   const aspect = aspects.includes(rawAspect) ? rawAspect : "";
   const rawSentiment = search.get("sentiment") ?? "";
   const sentiment = ["positive", "negative"].includes(rawSentiment) ? rawSentiment : "";
+  const rawSort = search.get("sort");
+  const sort = SORTS.find(([key]) => key === rawSort)?.[0] ?? SORTS[0][0];
+  const rawDay = search.get("day") ?? "";
+  // A real UTC day, as in the trend: 2026-02-30 doesn't survive the round trip through Date.
+  const day = isUtcDay(rawDay) ? rawDay : "";
   const rawOffset = Number(search.get("offset"));
   // Snapped to a page boundary, so "Page N of M" matches the reviews shown.
   const offset =
@@ -36,9 +57,10 @@ export default function ReviewList({ appid, aspects }: { appid: number; aspects:
   // The answer remembers which query it belongs to; a mismatch means a newer one is loading.
   const [answer, setAnswer] = useState<{ query: string; result: Loaded<ReviewPage> } | null>(null);
 
-  const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset) });
+  const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset), sort });
   if (aspect) params.set("aspect", aspect);
   if (sentiment) params.set("sentiment", sentiment);
+  if (day) params.set("day", day);
   const query = `/api/games/${appid}/reviews?${params}`;
   const result = answer?.result ?? null;
   const loading = answer?.query !== query;
@@ -53,16 +75,22 @@ export default function ReviewList({ appid, aspects }: { appid: number; aspects:
 
   const page = result?.kind === "ready" ? result.data : null;
   const info = page && pageInfo(page.total, PAGE_SIZE, page.offset);
+  const status = !result
+    ? "Loading reviews…"
+    : !page || !info
+      ? ""
+      : page.total === 0
+        ? "No reviews match these filters."
+        : info.to === 0
+          ? "No reviews on this page."
+          : `Showing ${info.from}–${info.to} of ${page.total.toLocaleString("en-US")}`;
 
   return (
     <>
       <div className="filters">
         <label>
           Topic
-          <select
-            value={aspect}
-            onChange={(e) => navigate({ aspect: e.target.value, offset: 0 })}
-          >
+          <select value={aspect} onChange={(e) => navigate({ aspect: e.target.value, offset: 0 })}>
             <option value="">All reviews</option>
             {aspects.map((a) => (
               <option key={a} value={a}>
@@ -72,18 +100,50 @@ export default function ReviewList({ appid, aspects }: { appid: number; aspects:
           </select>
         </label>
         <label>
-          Sentiment
+          Model reads as
           <select
             value={sentiment}
             onChange={(e) => navigate({ sentiment: e.target.value, offset: 0 })}
           >
-            <option value="">Any</option>
+            <option value="">Either</option>
             <option value="positive">Positive</option>
             <option value="negative">Negative</option>
           </select>
         </label>
-        {(aspect || sentiment) && (
-          <button type="button" onClick={() => navigate({ aspect: "", sentiment: "", offset: 0 })}>
+        <label>
+          Sort
+          <select
+            value={sort}
+            onChange={(e) => navigate({ sort: e.target.value === SORTS[0][0] ? "" : e.target.value, offset: 0 })}
+          >
+            {SORTS.map(([key, name]) => (
+              <option key={key} value={key}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {day && (
+          <div className="day-filter">
+            <span>Day</span>
+            <button
+              type="button"
+              onClick={() => navigate({ day: "", offset: 0 })}
+              aria-label={`Remove the day filter, ${formatDate(day)}`}
+            >
+              {formatDate(day)}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" aria-hidden>
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        )}
+        {(aspect || sentiment || day) && (
+          <button
+            type="button"
+            className="clear"
+            onClick={() => navigate({ aspect: "", sentiment: "", day: "", offset: 0 })}
+          >
             Clear filters
           </button>
         )}
@@ -98,38 +158,15 @@ export default function ReviewList({ appid, aspects }: { appid: number; aspects:
               : "Could not load reviews."}
         </p>
       )}
-      {!result && <p className="muted">Loading reviews…</p>}
+      <p className="list-status muted" aria-live="polite">
+        {status}
+      </p>
 
       {page && info && (
         <>
-          <p className="muted" aria-live="polite">
-            {page.total === 0
-              ? "No reviews match these filters."
-              : info.to === 0
-                ? "No reviews on this page."
-                : `Showing ${info.from}–${info.to} of ${page.total}`}
-          </p>
           <ul className={`reviews${loading ? " stale" : ""}`} aria-busy={loading}>
             {page.items.map((r) => (
-              <li key={r.id}>
-                <div className="review-meta">
-                  {r.predicted_sentiment && (
-                    <span className={`badge ${r.predicted_sentiment}`}>
-                      {r.predicted_sentiment === "positive" ? "Positive" : "Negative"}
-                    </span>
-                  )}
-                  {r.aspects.map((a) => (
-                    <span key={a} className="tag">
-                      {copyFor(a).label}
-                    </span>
-                  ))}
-                  <span>
-                    · {formatDate(r.created_at)} · {playtime(r.playtime_forever)}
-                    · {r.voted_up ? "Recommended" : "Not recommended"} on Steam
-                  </span>
-                </div>
-                <ReviewText id={r.id} text={r.review_text} />
-              </li>
+              <ReviewItem key={r.id} review={r} />
             ))}
           </ul>
           {(info.hasPrev || info.hasNext) && (
@@ -138,7 +175,7 @@ export default function ReviewList({ appid, aspects }: { appid: number; aspects:
                 disabled={!info.hasPrev || loading}
                 onClick={() => navigate({ offset: info.prevOffset })}
               >
-                ← Newer
+                <span aria-hidden>←</span> Previous
               </button>
               {info.to > 0 && (
                 <span className="muted">
@@ -149,7 +186,7 @@ export default function ReviewList({ appid, aspects }: { appid: number; aspects:
                 disabled={!info.hasNext || loading}
                 onClick={() => navigate({ offset: page.offset + PAGE_SIZE })}
               >
-                Older →
+                Next <span aria-hidden>→</span>
               </button>
             </div>
           )}
@@ -159,11 +196,55 @@ export default function ReviewList({ appid, aspects }: { appid: number; aspects:
   );
 }
 
+function ReviewItem({ review: r }: { review: Review }) {
+  const predicted = r.predicted_sentiment;
+  // The model reads the words, Steam records the thumb; where they part is worth showing.
+  const disagree = predicted !== null && (predicted === "positive") !== r.voted_up;
+  const facts = `${formatDate(r.created_at)} · ${playtime(r.playtime_forever)}`;
+  return (
+    <li>
+      <div className="review-meta">
+        <span className={`vote ${r.voted_up ? "up" : "down"}`}>
+          <Thumb up={r.voted_up} />
+          {r.voted_up ? "Recommended" : "Not recommended"}
+        </span>
+        {predicted && (
+          <span className={`badge ${predicted}`}>
+            Model: {predicted}
+            {disagree && (
+              <span className="disagree">
+                <span className="sr-only">, </span>disagrees
+                <span className="sr-only"> with the reviewer</span>
+              </span>
+            )}
+          </span>
+        )}
+        <span>
+          {facts}
+          {r.votes_up > 0 && ` · ${r.votes_up.toLocaleString("en-US")} found it helpful`}
+        </span>
+      </div>
+      {r.aspects.length > 0 && (
+        <p className="review-topics">
+          <span className="sr-only">Topics: </span>
+          {r.aspects.map((a) => (
+            <span key={a} className="tag">
+              {copyFor(a).label}
+            </span>
+          ))}
+        </p>
+      )}
+      <ReviewText review={r} context={facts} />
+    </li>
+  );
+}
+
 /** A review clamped to 6 lines by CSS, with a toggle only when the clamp hides something. */
-function ReviewText({ id, text }: { id: number; text: string }) {
+function ReviewText({ review, context }: { review: Review; context: string }) {
   const ref = useRef<HTMLParagraphElement>(null);
   const [open, setOpen] = useState(false);
   const [clamped, setClamped] = useState(false);
+  const id = `review-${review.id}`;
 
   // Measured, not guessed from length: how many lines a review wraps to depends on the width.
   // Re-measured on resize; while open there is no clamp to measure, so the last answer stands.
@@ -178,20 +259,36 @@ function ReviewText({ id, text }: { id: number; text: string }) {
 
   return (
     <>
-      <p ref={ref} id={`review-${id}`} className={`review-text${open ? " full" : ""}`}>
-        {text}
+      <p ref={ref} id={id} className={`review-text${open ? " full" : ""}`}>
+        {/* The sentences the topic tags came from, so a tag can be checked against its source. */}
+        {highlight(review.review_text, review.matches ?? []).map((s, i) =>
+          s.aspect ? (
+            <mark key={i} title={copyFor(s.aspect).label}>
+              {s.text}
+            </mark>
+          ) : (
+            s.text
+          ),
+        )}
       </p>
       {(clamped || open) && (
         <button
           type="button"
           className="link"
           aria-expanded={open}
-          aria-controls={`review-${id}`}
+          aria-controls={id}
           onClick={() => setOpen(!open)}
         >
           {open ? "Show less" : "Show full review"}
+          <span className="sr-only">, {context}</span>
         </button>
       )}
     </>
   );
+}
+
+function isUtcDay(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }

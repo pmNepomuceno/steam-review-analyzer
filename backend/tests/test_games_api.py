@@ -7,6 +7,7 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import settings
 from src.games import service
 from src.games.constants import AspectStatus
 from src.games.models import Game
@@ -74,8 +75,9 @@ async def test_search_maps_apps_and_caches_per_term(client, steam):
     first = await client.get("/steam/search", params={"q": "Hades"})
     assert first.status_code == 200
     assert first.json() == [
-        {"appid": 1145360, "name": "Hades", "image": "https://img/hades.jpg"},
-        {"appid": 1145350, "name": "Hades II", "image": None},
+        {"appid": 1145360, "name": "Hades", "image": "https://img/hades.jpg",
+         "availability": "on_demand"},
+        {"appid": 1145350, "name": "Hades II", "image": None, "availability": "on_demand"},
     ]
     assert route.calls.last.request.url.params["term"] == "hades"
     assert (await client.get("/steam/search", params={"q": " hades "})).json() == first.json()
@@ -83,6 +85,25 @@ async def test_search_maps_apps_and_caches_per_term(client, steam):
 
     await client.get("/steam/search", params={"q": "portal"})
     assert route.call_count == 2
+
+
+async def test_search_says_which_results_open_here(client, engine, steam, monkeypatch):
+    steam.get(constants.STORESEARCH_URL).mock(return_value=httpx.Response(200, json=SEARCH))
+    async with AsyncSession(engine) as session:
+        session.add(Game(appid=1145360, name="Hades", aspects_status=AspectStatus.DONE))
+        await session.commit()
+    monkeypatch.setattr(settings, "allow_on_demand_processing", False)
+
+    results = (await client.get("/steam/search", params={"q": "hades"})).json()
+    assert [r["availability"] for r in results] == ["analyzed", "unavailable"]
+
+    # Ingested and being rerun: /aspects answers 202 rather than 403, so it opens.
+    async with AsyncSession(engine) as session:
+        session.add(Game(appid=1145350, name="Hades II", last_ingested_at=DONE_AT,
+                         aspects_status=AspectStatus.PROCESSING))
+        await session.commit()
+    results = (await client.get("/steam/search", params={"q": "hades"})).json()
+    assert [r["availability"] for r in results] == ["analyzed", "on_demand"]
 
 
 async def test_search_rejects_short_terms_and_reports_steam_failure(client, steam):

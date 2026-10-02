@@ -258,6 +258,7 @@ async def test_aspects_unprocessed_returns_202_then_counts(client, engine, seede
         "quotes": [],
     }
     assert body["steam_sample"] == {"positive": 4, "negative": 0, "total": 4, "positive_pct": 100.0}
+    assert body["disagreements"] == 2  # reviews 1 and 4: predicted negative, thumbs up
     assert body["steam_rating"] == {
         "score_desc": "Very Positive", "positive": 900, "total": 1000, "positive_pct": 90.0
     }
@@ -317,6 +318,14 @@ async def test_reviews_carry_their_sentiment_and_aspects(client, engine, seeded,
     assert (items[1]["predicted_sentiment"], items[1]["aspects"]) == ("negative", ["price", "bugs"])
     assert (items[3]["predicted_sentiment"], items[3]["aspects"]) == ("positive", [])  # all "none"
     assert items[4]["aspects"] == ["performance"]
+
+    # The tagged sentences behind the aspects, in review order.
+    assert items[1]["matches"] == [
+        {"aspect": "bugs", "text": "It crashes a lot"},
+        {"aspect": "bugs", "text": "Another crash today"},
+        {"aspect": "price", "text": "Price is fair."},
+    ]
+    assert items[3]["matches"] == []
 
     filtered = (await client.get(url, params={"aspect": "bugs", "sentiment": "negative"})).json()
     assert filtered["items"] == [items[1]]
@@ -488,8 +497,28 @@ async def test_review_without_units_still_has_sentiment(client, engine, seeded, 
 
 
 async def test_reviews_rejects_unknown_filter_values(client, seeded):
-    assert (await client.get(f"/games/{APPID}/reviews", params={"aspect": "none"})).status_code == 422
-    assert (await client.get(f"/games/{APPID}/reviews", params={"sentiment": "meh"})).status_code == 422
+    url = f"/games/{APPID}/reviews"
+    assert (await client.get(url, params={"aspect": "none"})).status_code == 422
+    assert (await client.get(url, params={"sentiment": "meh"})).status_code == 422
+    assert (await client.get(url, params={"sort": "random"})).status_code == 422
+    assert (await client.get(url, params={"day": "yesterday"})).status_code == 422
+
+
+async def test_reviews_sort_and_day(client, engine, seeded):
+    async with engine.begin() as conn:
+        await conn.execute(update(Review).where(Review.id == 2).values(votes_up=9))
+        await conn.execute(update(Review).where(Review.id == 3).values(playtime_forever=600))
+    url = f"/games/{APPID}/reviews"
+
+    async def order(**params) -> list[int]:
+        return [r["id"] for r in (await client.get(url, params=params)).json()["items"]]
+
+    assert await order() == [4, 3, 2, 1]  # newest first by default
+    assert await order(sort="helpful") == [2, 4, 3, 1]  # ties stay newest first
+    assert await order(sort="playtime") == [3, 4, 2, 1]
+    # Review 2 was created 2026-09-03 00:00 UTC, the trend's day for it.
+    day = (await client.get(url, params={"day": "2026-09-03"})).json()
+    assert (day["total"], [r["id"] for r in day["items"]]) == (1, [2])
 
 
 async def test_filtered_pagination_boundaries(client, engine, seeded, ml_calls):

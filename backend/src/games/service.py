@@ -28,6 +28,14 @@ async def get_game(session: AsyncSession, appid: int) -> Game | None:
     return await session.scalar(stmt)
 
 
+async def get_games(session: AsyncSession, appids: list[int]) -> dict[int, Game]:
+    """The known ones among `appids`, by appid."""
+    if not appids:
+        return {}
+    result = await session.scalars(select(Game).where(Game.appid.in_(appids)))
+    return {g.appid: g for g in result}
+
+
 async def list_processed(session: AsyncSession) -> list[GameListItem]:
     """Every game whose analysis is done, by name, with its cached review count."""
     review_count = (
@@ -131,6 +139,12 @@ async def search_steam(http: httpx.AsyncClient, term: str) -> list[dict[str, Any
 
 def is_ingested(game: Game | None) -> bool:
     return game is not None and game.last_ingested_at is not None
+
+
+def opens_without_on_demand(game: Game | None) -> bool:
+    """Whether a deployment without on-demand processing still opens `game`: ingested and
+    not waiting for a run (a processing one answers 202, a failed one 500)."""
+    return is_ingested(game) and game.aspects_status != AspectStatus.PENDING
 
 
 async def save_game(
