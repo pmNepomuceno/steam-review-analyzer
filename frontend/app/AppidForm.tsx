@@ -1,33 +1,170 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
-export default function AppidForm() {
+import { fetchState, type Loaded, type SearchResult } from "../lib/api";
+
+const DEBOUNCE_MS = 300; // one /steam/search call after typing stops, not one per key
+const MIN_CHARS = 2; // the API's own minimum
+
+/**
+ * Search Steam by name or appid, with a suggestion list (an ARIA combobox). Picking any result
+ * opens /games/{appid}; the dashboard there shows whatever the API answers, including the
+ * "not in this demo" screen for a game that was not analyzed ahead of time.
+ */
+export default function AppidForm({ analyzed }: { analyzed?: Set<number> }) {
   const router = useRouter();
-  const [appid, setAppid] = useState("");
+  const listId = useId();
+  const [query, setQuery] = useState("");
+  // The answer remembers its term, so a stale answer is never shown for a newer query.
+  const [answer, setAnswer] = useState<{ term: string; result: Loaded<SearchResult[]> } | null>(
+    null,
+  );
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  // A name submitted before its search answered: opened as soon as the answer arrives.
+  const submitted = useRef<string | null>(null);
+
+  const term = query.trim();
+  const searchable = term.length >= MIN_CHARS;
+
+  useEffect(() => {
+    if (!searchable) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      fetchState<SearchResult[]>(`/api/steam/search?q=${encodeURIComponent(term)}`, controller.signal)
+        .then((result) => {
+          setAnswer({ term, result });
+          if (submitted.current !== term) return;
+          submitted.current = null;
+          if (result.kind === "ready" && result.data[0]) {
+            setOpen(false);
+            router.push(`/games/${result.data[0].appid}`);
+          }
+        })
+        .catch(() => {}); // aborted by a newer term or unmount
+    }, DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [term, searchable, router]);
+
+  const current = searchable && answer?.term === term ? answer.result : null;
+  const results = current?.kind === "ready" ? current.data.slice(0, 8) : [];
+  const expanded = open && results.length > 0;
+  const digits = /^\d+$/.test(term) ? Number(term) : null;
+
+  const go = (appid: number) => {
+    setOpen(false);
+    router.push(`/games/${appid}`);
+  };
+
+  let status = "";
+  if (searchable && !current) status = "Searching Steam…";
+  else if (current?.kind === "ready" && results.length === 0)
+    status = digits ? `No Steam game found for “${term}”; press Enter to try appid ${digits} anyway.` : `No Steam games match “${term}”.`;
+  else if (current && current.kind !== "ready")
+    status = "Steam search is unavailable right now. You can still enter an appid.";
+  else if (expanded) status = `${results.length} suggestion${results.length === 1 ? "" : "s"}; use the arrow keys to choose.`;
+  else if (!term) status = "For example Hades, or its appid 1145360 from the store URL.";
+
   return (
-    <form
-      className="appid"
-      onSubmit={(e) => {
-        e.preventDefault();
-        // A number input also accepts "1e6" or "007"; normalize to plain digits.
-        if (appid) router.push(`/games/${Number(appid)}`);
-      }}
-    >
-      <label>
-        Steam appid
-        <input
-          type="number"
-          min={1}
-          step={1}
-          required
-          placeholder="e.g. 1145360 (Hades)"
-          value={appid}
-          onChange={(e) => setAppid(e.target.value)}
-        />
-      </label>
-      <button type="submit">Analyze</button>
-    </form>
+    <div className="search">
+      <form
+        role="search"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const picked = results[active] ?? (digits === null ? results[0] : undefined);
+          if (picked) go(picked.appid);
+          else if (digits !== null && digits > 0) go(digits);
+          else if (searchable && !current) submitted.current = term; // still searching
+        }}
+      >
+        <div className="field">
+          <input
+            type="search"
+            inputMode="search"
+            enterKeyHint="search"
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            role="combobox"
+            aria-label="Search Steam by game name or appid"
+            aria-autocomplete="list"
+            aria-expanded={expanded}
+            aria-controls={listId}
+            aria-activedescendant={expanded && active >= 0 ? `${listId}-${active}` : undefined}
+            placeholder="Search Steam by name or appid"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              submitted.current = null;
+              setOpen(true);
+              setActive(-1);
+            }}
+            onFocus={() => setOpen(true)}
+            onBlur={() => setOpen(false)}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                if (!results.length) return;
+                e.preventDefault();
+                setOpen(true);
+                const step = e.key === "ArrowDown" ? 1 : -1;
+                const n = results.length;
+                setActive((i) => (i < 0 ? (step > 0 ? 0 : n - 1) : (i + step + n) % n));
+              } else if (e.key === "Escape") {
+                if (expanded) {
+                  e.preventDefault();
+                  setOpen(false);
+                  setActive(-1);
+                }
+              }
+            }}
+          />
+          <ul id={listId} role="listbox" className="suggestions" hidden={!expanded} aria-label="Matching Steam games">
+            {results.map((r, i) => (
+              <li
+                key={r.appid}
+                id={`${listId}-${i}`}
+                role="option"
+                aria-selected={i === active}
+                // mousedown would blur the input (closing the list) before the click lands
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => go(r.appid)}
+                onMouseEnter={() => setActive(i)}
+              >
+                {r.image ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- Steam CDN thumbnails, no optimizer needed
+                  <img src={r.image} alt="" width={92} height={34} loading="lazy" />
+                ) : (
+                  <span className="no-image" />
+                )}
+                <span className="text">
+                  <span className="name">{r.name}</span>
+                  <span className="sub">
+                    appid {r.appid}
+                    {analyzed &&
+                      (analyzed.has(r.appid) ? (
+                        <span className="tag">Analyzed</span>
+                      ) : (
+                        <span className="tag dim">Not analyzed</span>
+                      ))}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <button type="submit" className="primary">
+          Analyze
+        </button>
+      </form>
+      <p className="search-status" aria-live="polite">
+        {status}
+      </p>
+    </div>
   );
 }

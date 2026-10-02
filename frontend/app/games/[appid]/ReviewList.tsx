@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { fetchState, pageInfo, type Loaded, type ReviewPage } from "../../../lib/api";
+import { copyFor } from "../../../lib/insights";
 
 const PAGE_SIZE = 20;
 
@@ -51,7 +52,7 @@ export default function ReviewList({ appid, aspects }: { appid: number; aspects:
     <>
       <div className="filters">
         <label>
-          Aspect
+          Topic
           <select
             value={aspect}
             onChange={(e) => navigate({ aspect: e.target.value, offset: 0 })}
@@ -59,7 +60,7 @@ export default function ReviewList({ appid, aspects }: { appid: number; aspects:
             <option value="">All reviews</option>
             {aspects.map((a) => (
               <option key={a} value={a}>
-                {a}
+                {copyFor(a).label}
               </option>
             ))}
           </select>
@@ -103,12 +104,12 @@ export default function ReviewList({ appid, aspects }: { appid: number; aspects:
                 <div className="review-meta">
                   {r.predicted_sentiment && (
                     <span className={`badge ${r.predicted_sentiment}`}>
-                      {r.predicted_sentiment}
+                      {r.predicted_sentiment === "positive" ? "Positive" : "Negative"}
                     </span>
                   )}
                   {r.aspects.map((a) => (
                     <span key={a} className="tag">
-                      {a}
+                      {copyFor(a).label}
                     </span>
                   ))}
                   <span>

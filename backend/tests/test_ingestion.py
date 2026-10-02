@@ -1,8 +1,13 @@
+import asyncio
+import time
+from itertools import pairwise
+
 import httpx
 import pytest
 
+from src.config import settings
 from src.games.exceptions import GameNotFound
-from src.reviews import ingestion
+from src.reviews import constants, ingestion
 from src.reviews.exceptions import SteamUnavailable
 from tests.steam_fakes import make_reviews, mock_steam
 
@@ -34,8 +39,8 @@ def test_parse_review_drops_unusable(mutate):
 async def test_fetch_reviews_paginates_and_caps(steam):
     _, reviews_route = mock_steam(steam, 1, 250)
     async with httpx.AsyncClient() as http:
-        everything = await ingestion.fetch_reviews(http, 1, max_reviews=1000, delay_s=0)
-        capped = await ingestion.fetch_reviews(http, 1, max_reviews=120, delay_s=0)
+        everything = await ingestion.fetch_reviews(http, 1, max_reviews=1000)
+        capped = await ingestion.fetch_reviews(http, 1, max_reviews=120)
     assert len(everything) == 250
     assert len(capped) == 120
     assert reviews_route.called
@@ -47,7 +52,7 @@ async def test_fetch_reviews_dedupes_and_stops_on_repeated_cursor(steam):
         return_value=httpx.Response(200, json=page)
     )
     async with httpx.AsyncClient() as http:
-        result = await ingestion.fetch_reviews(http, 1, max_reviews=1000, delay_s=0)
+        result = await ingestion.fetch_reviews(http, 1, max_reviews=1000)
     assert len(result) == 5
     assert route.call_count == 2  # "*" then "same"; the repeated cursor ends the loop
 
@@ -89,3 +94,28 @@ async def test_retries_then_gives_up_on_429(steam):
         with pytest.raises(SteamUnavailable):
             await ingestion.fetch_app_name(http, 7)
     assert route.call_count == ingestion.constants.RETRY_ATTEMPTS
+
+
+async def test_every_steam_call_shares_one_pace(steam, monkeypatch):
+    # Ingestion pages, store search and the rating fetch, all at once: their calls start at
+    # least steam_request_delay_s apart, whichever code path made them.
+    delay = 0.1
+    monkeypatch.setattr(settings, "steam_request_delay_s", delay)
+    mock_steam(steam, 1, 250)  # 3 review pages, plus an empty one that ends the cursor
+    steam.get(constants.STORESEARCH_URL).mock(return_value=httpx.Response(200, json={"items": []}))
+    started: list[tuple[float, str]] = []
+
+    async def record(request: httpx.Request) -> None:
+        started.append((time.monotonic(), request.url.path))
+
+    async with httpx.AsyncClient(event_hooks={"request": [record]}) as http:
+        await asyncio.gather(
+            ingestion.fetch_reviews(http, 1, max_reviews=1000),
+            ingestion.search_store(http, "hades"),
+            ingestion.fetch_review_summary(http, 1),
+            ingestion.search_store(http, "portal"),
+        )
+    times = sorted(t for t, _ in started)
+    assert len(times) == 7
+    # Paced per code path, a search would start right after the first page (gap near 0).
+    assert min(b - a for a, b in pairwise(times)) >= delay * 0.9  # timer slack

@@ -9,13 +9,27 @@ export type SentimentCounts = {
   positive_pct: number | null;
 };
 
+export type Quote = { text: string; sentiment: Sentiment };
+
+export type AspectStats = SentimentCounts & { aspect: string; quotes: Quote[] };
+
+// Steam's own store rating, as its store page shows it: English reviews, all time.
+export type SteamRating = {
+  score_desc: string; // e.g. "Very Positive"
+  positive: number;
+  total: number;
+  positive_pct: number | null;
+};
+
 export type AspectSummary = {
   appid: number;
   name: string;
   status: "ready";
   overall: SentimentCounts;
-  aspects: (SentimentCounts & { aspect: string })[];
+  aspects: AspectStats[];
   trend: { date: string; positive: number; negative: number }[];
+  steam_sample: SentimentCounts; // Steam's thumbs (voted_up) on the same reviews as `overall`
+  steam_rating: SteamRating | null; // null until the API could fetch it from Steam
 };
 
 export type Review = {
@@ -39,6 +53,16 @@ export type ReviewPage = {
 };
 
 export type AvailableGame = { appid: number; name: string };
+
+// GET /games: every game whose results are ready.
+export type GameListItem = AvailableGame & { review_count: number; analyzed_at: string | null };
+
+// GET /steam/search
+export type SearchResult = { appid: number; name: string; image: string | null };
+
+/** Steam's wide store banner for an app; not every app has one (hide it on error). */
+export const headerImage = (appid: number) =>
+  `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${appid}/header.jpg`;
 
 export type Loaded<T> =
   | { kind: "ready"; data: T }

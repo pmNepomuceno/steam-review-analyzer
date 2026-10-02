@@ -18,6 +18,7 @@ from src.ml import aspects, sentiment
 from src.reviews import constants, service
 from src.reviews.constants import Skipped
 from src.reviews.models import Review, ReviewAspect
+from tests.steam_fakes import APPREVIEWS_RE
 
 APPID = 1145360
 TEXTS = {
@@ -27,6 +28,18 @@ TEXTS = {
     4: "Bad fps. Bad overall.",  # negative: performance
 }
 KEYWORDS = {"crash": "bugs", "price": "price", "fps": "performance"}
+STEAM_SUMMARY = {
+    "review_score_desc": "Very Positive", "total_positive": 900, "total_negative": 100,
+    "total_reviews": 1000,
+}
+
+
+@pytest.fixture(autouse=True)
+def steam_summary(steam):
+    """Steam's store rating, which each processing run fetches once."""
+    return steam.get(url__regex=APPREVIEWS_RE, params__contains={"num_per_page": "0"}).mock(
+        return_value=httpx.Response(200, json={"success": 1, "query_summary": STEAM_SUMMARY})
+    )
 
 
 @pytest.fixture
@@ -46,6 +59,10 @@ def ml_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         return [{"sentence": u, "aspect": tag(u), "similarity": 0.5} for u in units]
 
     monkeypatch.setattr(sentiment, "predict", predict)
+    # Quote filtering at the end of a run; not a per-review call, so not counted in `calls`.
+    monkeypatch.setattr(sentiment, "predict_labels", lambda texts: [
+        "negative" if "crash" in t or "Bad" in t else "positive" for t in texts
+    ])
     monkeypatch.setattr(aspects, "assign_aspects", assign_aspects)
     monkeypatch.setattr(sentiment, "ensure_loaded", dict)
     return calls
@@ -237,7 +254,12 @@ async def test_aspects_unprocessed_returns_202_then_counts(client, engine, seede
     assert (by_aspect["bugs"]["positive"], by_aspect["bugs"]["negative"]) == (0, 1)
     assert (by_aspect["price"]["positive"], by_aspect["price"]["negative"]) == (1, 1)
     assert by_aspect["story"] == {
-        "aspect": "story", "positive": 0, "negative": 0, "total": 0, "positive_pct": None
+        "aspect": "story", "positive": 0, "negative": 0, "total": 0, "positive_pct": None,
+        "quotes": [],
+    }
+    assert body["steam_sample"] == {"positive": 4, "negative": 0, "total": 4, "positive_pct": 100.0}
+    assert body["steam_rating"] == {
+        "score_desc": "Very Positive", "positive": 900, "total": 1000, "positive_pct": 90.0
     }
 
     async with engine.connect() as conn:
@@ -527,3 +549,102 @@ async def test_on_demand_off_serves_only_processed_games(
     await set_status(engine, AspectStatus.FAILED)
     assert (await client.get(f"/games/{APPID}/aspects")).status_code == 500
     assert ml_calls == []
+
+
+async def test_aspect_quotes_prefer_the_weak_side(client, engine, seeded, ml_calls, monkeypatch):
+    await add_review(
+        engine, 5,
+        "Bad price, way too high for what you get here. Crash after crash after crash, "
+        "every single session. Love the price of the soundtrack though",
+    )
+    await process(engine)
+    # Picked once by the run and stored; /aspects only reads them, with no model call.
+    monkeypatch.setattr(sentiment, "predict_labels", None)
+    body = (await client.get(f"/games/{APPID}/aspects")).json()
+    quotes = {a["aspect"]: a["quotes"] for a in body["aspects"]}
+    async with engine.connect() as conn:
+        assert await conn.scalar(select(Game.aspect_quotes)) == quotes
+    # Units under QUOTE_MIN_CHARS ("It crashes a lot", "Price is great") never qualify.
+    assert quotes["bugs"] == [{
+        "text": "Crash after crash after crash, every single session", "sentiment": "negative"
+    }]
+    # The last sentence is in a negative review but reads positive, so it is no example.
+    assert quotes["price"] == [{
+        "text": "Bad price, way too high for what you get here", "sentiment": "negative"
+    }]
+    assert quotes["story"] == []
+
+
+def test_pick_quotes_fills_from_the_other_side_and_drops_duplicates():
+    many = {"negative": ["Bad A", "bad a", "Bad B", "Bad C", "Bad D"], "positive": ["Good"]}
+    assert [q["text"] for q in service._pick_quotes(many, "negative")] == ["Bad A", "Bad B", "Bad C"]
+    two = {"negative": ["Bad A", "Bad B"], "positive": ["Good"]}
+    assert [q["text"] for q in service._pick_quotes(two, "negative")] == ["Bad A", "Bad B"]
+    one = {"negative": ["Bad A"], "positive": ["Good A", "Good B", "Good C"]}
+    assert [(q["text"], q["sentiment"]) for q in service._pick_quotes(one, "negative")] == [
+        ("Bad A", "negative"), ("Good A", "positive"), ("Good B", "positive")
+    ]
+
+
+async def steam_rating(engine) -> tuple:
+    async with engine.connect() as conn:
+        return tuple((await conn.execute(select(
+            Game.steam_score_desc, Game.steam_positive, Game.steam_total,
+            Game.steam_rating_checked_at.is_not(None),
+        ))).one())
+
+
+async def test_steam_rating_is_fetched_by_the_run_not_by_requests(client, engine, seeded,
+                                                                   ml_calls, steam_summary):
+    await process(engine)
+    assert steam_summary.call_count == 1
+    params = steam_summary.calls.last.request.url.params  # what Steam's store page shows
+    assert (params["language"], params["purchase_type"]) == ("english", "steam")
+    assert await steam_rating(engine) == ("Very Positive", 900, 1000, True)
+    for _ in range(2):
+        rating = (await client.get(f"/games/{APPID}/aspects")).json()["steam_rating"]
+        assert rating == {
+            "score_desc": "Very Positive", "positive": 900, "total": 1000, "positive_pct": 90.0
+        }
+    assert steam_summary.call_count == 1
+
+
+async def test_steam_rating_failure_is_recorded_not_retried(client, engine, seeded, ml_calls,
+                                                            steam_summary):
+    steam_summary.mock(return_value=httpx.Response(500))
+    await process(engine)
+    assert (await game_status(engine))[0] == AspectStatus.DONE  # best effort: the run succeeds
+    assert await steam_rating(engine) == (None, None, None, True)  # asked, nothing to store
+    for _ in range(2):
+        resp = await client.get(f"/games/{APPID}/aspects")
+        assert resp.status_code == 200 and resp.json()["steam_rating"] is None
+    assert steam_summary.call_count == constants.RETRY_ATTEMPTS  # requests never call Steam
+
+    steam_summary.mock(return_value=httpx.Response(200, json={"success": 1}))  # no summary
+    await process(engine, force=True)
+    assert await steam_rating(engine) == (None, None, None, True)
+
+
+async def test_forced_rerun_keeps_the_rating_when_steam_fails(engine, seeded, ml_calls,
+                                                              steam_summary):
+    await process(engine)
+    steam_summary.mock(return_value=httpx.Response(500))
+    await process(engine, force=True)
+    assert await steam_rating(engine) == ("Very Positive", 900, 1000, True)
+
+
+async def test_game_processed_before_stored_quotes_is_served_without_them(
+    client, engine, seeded, ml_calls, monkeypatch, caplog
+):
+    await process(engine)
+    async with engine.begin() as conn:  # as left by migration 0005 on an already-done game
+        await conn.execute(update(Game).values(
+            aspect_quotes=None, steam_rating_checked_at=None, steam_score_desc=None,
+            steam_positive=None, steam_total=None,
+        ))
+    monkeypatch.setattr(sentiment, "predict_labels", None)  # no model needed to serve it
+    resp = await client.get(f"/games/{APPID}/aspects")
+    assert resp.status_code == 200
+    assert all(a["quotes"] == [] for a in resp.json()["aspects"])
+    assert resp.json()["steam_rating"] is None
+    assert f"process_reviews.py --force {APPID}" in caplog.text

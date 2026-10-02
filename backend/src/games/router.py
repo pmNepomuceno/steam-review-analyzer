@@ -1,7 +1,7 @@
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,14 +9,27 @@ from src.database import get_session
 from src.games import service
 from src.games.constants import AspectStatus
 from src.games.dependencies import valid_appid
-from src.games.schemas import UNPROCESSED_RESPONSES, AspectSummary
+from src.games.schemas import (
+    UNPROCESSED_RESPONSES,
+    AspectSummary,
+    GameListItem,
+    SearchResult,
+    SteamRating,
+)
 from src.reviews import service as reviews_service
 from src.reviews.dependencies import get_http_client
 
-router = APIRouter(prefix="/games/{appid}", tags=["games"])
+router = APIRouter(prefix="/games", tags=["games"])
+steam_router = APIRouter(prefix="/steam", tags=["steam"])
 
 
-@router.get("/aspects", response_model=AspectSummary, responses=UNPROCESSED_RESPONSES)
+@router.get("", response_model=list[GameListItem])
+async def list_games(session: Annotated[AsyncSession, Depends(get_session)]) -> list[GameListItem]:
+    """Every game whose results are ready, by name: what the homepage lists."""
+    return await service.list_processed(session)
+
+
+@router.get("/{appid}/aspects", response_model=AspectSummary, responses=UNPROCESSED_RESPONSES)
 async def get_aspects(
     appid: Annotated[int, Depends(valid_appid)],
     # scope="function" closes the session when this returns, before the response and any
@@ -32,5 +45,27 @@ async def get_aspects(
         game = await service.get_game(session, appid)
     if game.aspects_status != AspectStatus.DONE:
         return await reviews_service.unprocessed_response(session, game)
-    summary = await reviews_service.aspect_summary(session, appid)
-    return AspectSummary(name=game.name, **summary)
+    summary = await reviews_service.aspect_summary(session, game)
+    rating = None
+    if game.steam_total is not None:
+        rating = SteamRating(
+            score_desc=game.steam_score_desc,
+            positive=game.steam_positive,
+            total=game.steam_total,
+            positive_pct=(
+                round(100 * game.steam_positive / game.steam_total, 1) if game.steam_total else None
+            ),
+        )
+    return AspectSummary(name=game.name, steam_rating=rating, **summary)
+
+
+@steam_router.get("/search", response_model=list[SearchResult])
+async def search(
+    q: Annotated[str, Query(min_length=2, max_length=100)],
+    http: Annotated[httpx.AsyncClient, Depends(get_http_client)],
+) -> list[SearchResult]:
+    """Steam store search, proxied because browsers can't call it (no CORS headers).
+
+    Not limited to analyzed games: opening an unlisted result gets the usual 403 there.
+    """
+    return await service.search_steam(http, q)

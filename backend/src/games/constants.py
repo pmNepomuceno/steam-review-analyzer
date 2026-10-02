@@ -2,6 +2,9 @@ from enum import StrEnum
 
 MAX_APPID = 2**31 - 1  # `games.appid` is a 32-bit integer column
 
+SEARCH_CACHE_TTL_S = 60.0  # /steam/search answers per term
+SEARCH_CACHE_MAX_TERMS = 500
+
 
 class AspectStatus(StrEnum):
     """`games.aspects_status`: where the sentiment + aspect pass stands for a game."""

@@ -39,3 +39,11 @@ def predict(text: str) -> SentimentPrediction:
     best = int(probs.argmax())
     voted_up = bool(pipeline.classes_[best])
     return {"label": POSITIVE if voted_up else NEGATIVE, "confidence": float(probs[best])}
+
+
+def predict_labels(texts: list[str]) -> list[str]:
+    """`predict`'s label for each text, in one batched call (cheap enough per request)."""
+    if not texts:
+        return []
+    pipeline = ensure_loaded()["pipeline"]
+    return [POSITIVE if bool(c) else NEGATIVE for c in pipeline.predict(texts)]
