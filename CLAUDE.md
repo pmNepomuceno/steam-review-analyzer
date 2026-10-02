@@ -8,7 +8,7 @@ Milestones 1-7 are done. Backend: on-demand ingestion (M1), the sentiment baseli
 
 The deployed API runs with `ALLOW_ON_DEMAND_PROCESSING=false` (`render.yaml`): at Render's 0.1 CPU one game takes 14-19 min, so the demo serves only games already `done` and answers 403 with the list of them for any other appid. Locally the setting defaults to `true`. Encoder batching across reviews is logged in DECISIONS.md as not attempted; don't start it unasked.
 
-**Next step:** the user deploys by hand (Neon, then loading the five local games into it with `pg_dump` as the README's Deploy section shows, then Render, then Vercel with `API_URL` set before the first build), then fills in the live URL and demo clip placeholders at the top of README.md. Never deploy or push from here. `docs/PROJECT_BRIEF.md` is the source of truth for scope, data model, endpoints and milestones; `docs/DECISIONS.md` logs choices made while building.
+**Deployed:** the user deployed by hand. The API runs on Render (Singapore), the dashboard on Vercel (https://steam-review-analyzer-wheat.vercel.app/) and the data on Neon, loaded from the five local games with the README's `pg_dump --data-only` procedure (the real history of the first load, including a failed first attempt, is in DECISIONS.md, 2026-10-01). README.md's live URL is filled in; the demo clip link is still a placeholder the user fills in after recording it. Never deploy or push from here. `docs/PROJECT_BRIEF.md` is the source of truth for scope, data model, endpoints and milestones; `docs/DECISIONS.md` logs choices made while building.
 
 ## Commands
 

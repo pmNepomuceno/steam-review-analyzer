@@ -1,6 +1,6 @@
 # Steam Review Sentiment + Aspect Analyzer
 
-**Live demo:** <!-- TODO: live URL --> _link coming soon_ · **Demo clip:** <!-- TODO: demo clip URL --> _link coming soon_
+**Live demo:** https://steam-review-analyzer-wheat.vercel.app/ · **Demo clip:** <!-- TODO: demo clip URL --> _link coming soon_
 
 Steam shows one number per game: "Very Positive", "Mixed". To learn *why* players feel that way, you still have to read hundreds of reviews. This app takes any Steam appid, fetches and caches the game's English reviews in Postgres, and breaks sentiment down by aspect: **performance, price, bugs, story, gameplay**. The result reads like "bugs: 80% negative, story: 90% positive" rather than one blended score. It is meant for indie developers triaging post-launch feedback, publishers weighing a price change, and players comparing two similarly rated games.
 
@@ -154,12 +154,19 @@ npm test && npm run lint && npm run typecheck
   (cd backend && source .venv/bin/activate && \
     DATABASE_URL='<pooled, asyncpg form>' DATABASE_URL_DIRECT='<direct, asyncpg form>' alembic upgrade head)
   # Copy games, reviews and aspect units in one transaction. psql takes the direct string as Neon shows it.
+  # Keep --data-only: without it the dump writes review_aspects before reviews, and on Neon the FK
+  # already exists, so that table fails to load. pipefail makes a pg_dump failure visible.
+  set -o pipefail
   docker compose exec -T db pg_dump -U steam -d steam_reviews --data-only \
       -t games -t reviews -t review_aspects -t review_aspects_id_seq \
     | docker compose exec -T db psql -v ON_ERROR_STOP=1 --single-transaction '<direct string>'
   # Check: five rows, all done.
   docker compose exec -T db psql '<direct string>' -c "SELECT appid, name, aspects_status FROM games ORDER BY appid"
+  # Check: row counts and the id sequence match the local database (run it against both).
+  docker compose exec -T db psql '<direct string>' -At -c \
+    "SELECT 'games', count(*) FROM games UNION ALL SELECT 'reviews', count(*) FROM reviews UNION ALL SELECT 'review_aspects', count(*) FROM review_aspects UNION ALL SELECT 'seq', last_value FROM review_aspects_id_seq"
   ```
+  The Neon tables must be empty before the copy. The load rolls back on the first duplicate key, so after a failed or partial attempt clear them with `TRUNCATE games, reviews, review_aspects RESTART IDENTITY CASCADE` (check which database you are connected to first) and run it again.
   This was rehearsed against a fresh local database: five games `done`, 1000 reviews each with sentiment, and the aspect-unit id sequence carried over.
 - **API: Render.** New → Blueprint, then select this repo. `render.yaml` defines a Docker web service from `backend/`. Enter `DATABASE_URL` (the pooled string) and `DATABASE_URL_DIRECT` (the direct string) when prompted. `ALLOW_ON_DEMAND_PROCESSING=false` comes from `render.yaml`. The container runs `alembic upgrade head` against the direct endpoint on start. The embedding model is baked into the image, and the sentiment model ships in the repo. The app disables asyncpg's prepared-statement cache, so it works through Neon's PgBouncer pooler.
 - **Dashboard: Vercel.** Import the repo with root directory `frontend`, and set `API_URL` to the Render service URL *before* the first build, because Next.js bakes the `/api` rewrite into the build. `frontend/Dockerfile` is available for hosting it elsewhere (`--build-arg API_URL=...`).
