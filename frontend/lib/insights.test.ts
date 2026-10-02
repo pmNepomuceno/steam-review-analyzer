@@ -198,12 +198,13 @@ describe("highlight", () => {
 
 describe("timeAgo", () => {
   const now = new Date(2026, 9, 2, 9, 0).getTime(); // local time, like timeAgo's days
-  const at = (...args: [number, number, number, number?]) => new Date(...args).toISOString();
+  const at = (...args: [number, number, number, number?, number?]) => new Date(...args).toISOString();
 
   it("counts calendar days, not 24-hour spans", () => {
     expect(timeAgo(at(2026, 9, 2, 1), now)).toBe("today");
     expect(timeAgo(at(2026, 9, 1, 23), now)).toBe("yesterday");
     expect(timeAgo(at(2026, 8, 29), now)).toBe("3 days ago");
+    expect(timeAgo(at(2026, 9, 3, 0, 30), now)).toBe("today"); // a client clock behind the server
   });
 
   it("moves to weeks, months and years", () => {

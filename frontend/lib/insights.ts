@@ -164,8 +164,9 @@ const localMidnight = (ms: number) => new Date(ms).setHours(0, 0, 0, 0);
 
 /** A past timestamp as calendar days in local time: "today", "yesterday", "3 weeks ago". */
 export function timeAgo(iso: string, now = Date.now()): string {
-  // Rounded, since a day across a DST change is 23 or 25 hours.
-  const days = Math.round((localMidnight(Date.parse(iso)) - localMidnight(now)) / DAY_MS);
+  // Rounded, since a day across a DST change is 23 or 25 hours. Capped at today, so a client
+  // clock behind the server's never says "tomorrow".
+  const days = Math.min(0, Math.round((localMidnight(Date.parse(iso)) - localMidnight(now)) / DAY_MS));
   if (days > -7) return RELATIVE.format(days, "day");
   if (days > -30) return RELATIVE.format(Math.round(days / 7), "week");
   if (days > -365) return RELATIVE.format(Math.round(days / 30), "month");

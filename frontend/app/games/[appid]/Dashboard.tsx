@@ -154,11 +154,12 @@ function Status({
 }) {
   // A waiting screen is all text, so the whole of it is a live region. A final screen
   // announces only its title, not the search form or buttons below it, and also takes focus
-  // when nothing else has it (see Dashboard).
+  // when nothing else has it (see Dashboard). Keyed by title so a new screen inserts a fresh
+  // region: screen readers miss a role set on an element whose text changes in the same render.
   return (
     <div className={`panel state${error ? " error" : ""}`} role={spinner ? "status" : undefined}>
       {spinner && <span className="spinner" aria-hidden />}
-      <div role={spinner ? undefined : error ? "alert" : "status"}>
+      <div key={title} role={spinner ? undefined : error ? "alert" : "status"}>
         <h1 tabIndex={-1}>{title}</h1>
       </div>
       <div className="muted">{children}</div>
