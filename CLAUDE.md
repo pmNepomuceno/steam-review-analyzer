@@ -46,6 +46,10 @@ npm run build
 
 Tests create and use a separate `steam_reviews_test` database on the same server (see `tests/conftest.py`).
 
+## Library docs
+
+When unfamiliar with a library's current API (for example SQLAlchemy 2 async sessions, pydantic-settings, onnxruntime and `tokenizers`, the Next.js app router or Recharts), consult the Context7 MCP server before writing code that uses it, instead of relying on memory. Resolve the library ID first, then fetch the docs for the specific API or topic in question.
+
 ## What the project is
 
 A web app that takes any Steam appid, fetches and caches its reviews in Postgres, and reports sentiment broken down by aspect (performance, price, bugs, story, gameplay, or none). It is a portfolio piece meant to show a trained classifier and an embedding-based pipeline, so **do not replace the ML components with LLM API calls**.
